@@ -9,32 +9,57 @@ import (
 	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
 )
 
-// sidebarView renders the scrolling playlist list on the left.
+// sidebarView renders the tab strip and the scrolling list on the left.
 func (m Model) sidebarView(w, h int) string {
-	inner, rows := w-2, h-2
+	inner, rows := w-2, h-3 // borders + tab strip
 	focused := m.focus == paneSidebar
+	sl := m.side[m.tab]
 
-	var lines []string
-	title := "Playlists"
+	lines := []string{m.tabStrip()}
+	title := m.tab.String()
 	switch {
-	case m.plErr != "":
-		lines = wrap(m.plErr, styleErr, inner)
-	case !m.plLoaded:
-		lines = []string{styleMuted.Render(" Loading playlists…")}
+	case sl.err != "":
+		lines = append(lines, wrap(sl.err, styleErr, inner)...)
+	case !sl.loaded:
+		lines = append(lines, styleMuted.Render(" Loading "+strings.ToLower(title)+"…"))
+	case len(sl.items) == 0:
+		lines = append(lines, styleMuted.Render(" Nothing here yet"))
 	default:
-		title = fmt.Sprintf("Playlists · %d", len(m.playlists))
-		end := min(m.plOffset+rows, len(m.playlists))
-		for i := m.plOffset; i < end; i++ {
-			lines = append(lines, playlistRow(m.playlists[i], i == m.plCursor, focused, inner))
+		title = fmt.Sprintf("%s · %d", title, len(sl.items))
+		end := min(sl.offset+rows, len(sl.items))
+		for i := sl.offset; i < end; i++ {
+			lines = append(lines, playlistRow(sl.items[i], i == sl.cursor, focused, inner))
 		}
 	}
 	return panel(title, lines, w, h, focused)
 }
 
+// tabStrip shows the sidebar tabs with the active one highlighted.
+func (m Model) tabStrip() string {
+	parts := make([]string, numTabs)
+	for t := sideTab(0); t < numTabs; t++ {
+		label := fmt.Sprintf("%d %s", t+1, t)
+		if t == m.tab {
+			parts[t] = styleAccent.Bold(true).Render(label)
+		} else {
+			parts[t] = styleMuted.Render(label)
+		}
+	}
+	return " " + strings.Join(parts, styleMuted.Render("  "))
+}
+
 func playlistRow(p spotify.Playlist, cursor, focused bool, w int) string {
 	count := fmt.Sprintf("%d ", p.Tracks)
+	if p.Album {
+		count = p.Year + " "
+	}
+	// Locked playlists (tracks not readable) are dimmed and marked.
+	label, nameStyle := "  "+p.Name, styleText
+	if p.Locked {
+		label, nameStyle = "⊘ "+p.Name, styleMuted
+	}
 	if !cursor {
-		return spread(styleText.Render("  "+p.Name), styleMuted.Render(count), w)
+		return spread(nameStyle.Render(label), styleMuted.Render(count), w)
 	}
 
 	// Cursor row: highlight bar spanning the full width, including the gap.
@@ -43,9 +68,16 @@ func playlistRow(p spotify.Playlist, cursor, focused bool, w int) string {
 	if !focused {
 		fg = colText
 	}
+	if p.Locked {
+		fg = colMuted
+	}
 	bg := lipgloss.NewStyle().Background(colSelBg)
 	cnt := bg.Foreground(colMuted).Render(count)
-	name := ansi.Truncate("▌ "+p.Name, w-ansi.StringWidth(count)-1, "…")
+	prefix := "▌ "
+	if p.Locked {
+		prefix = "▌⊘ "
+	}
+	name := ansi.Truncate(prefix+p.Name, w-ansi.StringWidth(count)-1, "…")
 	name = bg.Foreground(fg).Bold(true).Render(name)
 	gap := max(w-ansi.StringWidth(name)-ansi.StringWidth(cnt), 0)
 	return name + bg.Render(strings.Repeat(" ", gap)) + cnt

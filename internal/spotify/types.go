@@ -14,6 +14,18 @@ type Playlist struct {
 	URI    string
 	Tracks int
 	Liked  bool // the synthetic "Liked Songs" entry (/me/tracks)
+
+	// Locked marks a playlist whose tracks Spotify probably won't give us:
+	// followed, not owned or collaborative. It starts as a guess from the
+	// owner and is corrected by what loading the tracks really does.
+	Locked bool
+
+	// Set for saved albums, which share the playlist flow (open, list tracks,
+	// play via context URI).
+	Album    bool
+	Artist   string
+	Year     string
+	ImageURL string // album art, applied to tracks because album listings omit it
 }
 
 type Track struct {

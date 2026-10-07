@@ -1,7 +1,8 @@
 # spotiCLI
 
-A Spotify TUI written in Go (Bubble Tea). Playlists on the left, tracks in the
-middle, now-playing with album art and an audio visualizer at the bottom.
+A Spotify TUI written in Go (Bubble Tea). Playlists, Liked Songs and saved albums
+on the left (switch with `1`/`2`), tracks in the middle, now-playing with album
+art and an audio visualizer at the bottom.
 
 ## Setup
 
@@ -21,7 +22,16 @@ Playback needs Spotify Premium and Spotify open on one of your devices.
 | --- | --- |
 | `↑`/`↓`, `j`/`k` | move |
 | `tab`, `h`/`l` | switch pane |
-| `enter` | open playlist / play track |
+| `1` / `2`, `[` / `]` | sidebar: playlists (with Liked Songs) / saved albums |
+| `enter` | open playlist or album / play track |
 | `space` | play / pause |
 | `n` / `p` | next / previous |
 | `q` | quit |
+
+## Album art
+
+Covers are drawn with half-block characters, which works in any truecolor
+terminal. In Kitty and Ghostty the real image is shown instead (Kitty graphics
+protocol with Unicode placeholders). Inside tmux and in other terminals the
+half-block fallback is used. Override the choice with
+`SPOTICLI_COVER=blocks` or `SPOTICLI_COVER=kitty`.

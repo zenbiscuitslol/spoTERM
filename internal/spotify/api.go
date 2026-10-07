@@ -129,12 +129,26 @@ type apiTrack struct {
 		Name string `json:"name"`
 	} `json:"artists"`
 	Album struct {
-		Name   string `json:"name"`
-		Images []struct {
-			URL   string `json:"url"`
-			Width int    `json:"width"`
-		} `json:"images"`
+		Name   string     `json:"name"`
+		Images []apiImage `json:"images"`
 	} `json:"album"`
+}
+
+type apiImage struct {
+	URL   string `json:"url"`
+	Width int    `json:"width"`
+}
+
+// pickImage takes the smallest image that's still >= 300px. Images come
+// widest-first.
+func pickImage(images []apiImage) string {
+	img := ""
+	for _, i := range images {
+		if img == "" || i.Width >= 300 {
+			img = i.URL
+		}
+	}
+	return img
 }
 
 // toTrack converts to a Track; ok is false for items we can't play (nulls,
@@ -147,20 +161,13 @@ func (t *apiTrack) toTrack() (Track, bool) {
 	for i, a := range t.Artists {
 		names[i] = a.Name
 	}
-	// Images come widest-first; take the smallest one that's still >= 300px.
-	img := ""
-	for _, i := range t.Album.Images {
-		if img == "" || i.Width >= 300 {
-			img = i.URL
-		}
-	}
 	return Track{
 		URI:      t.URI,
 		Title:    t.Name,
 		Artist:   strings.Join(names, ", "),
 		Album:    t.Album.Name,
 		Duration: time.Duration(t.DurationMs) * time.Millisecond,
-		ImageURL: img,
+		ImageURL: pickImage(t.Album.Images),
 	}, true
 }
 
@@ -171,6 +178,21 @@ const (
 	maxTracks    = 500
 )
 
+// ErrPlaylistForbidden is returned by Tracks for playlists Spotify won't
+// expose: it only serves the tracks of playlists you own or collaborate on.
+var ErrPlaylistForbidden = errors.New("Spotify only exposes tracks of playlists you own or collaborate on")
+
+// userID returns the current user's ID, or "" if it can't be fetched.
+func (c *Client) userID(ctx context.Context) string {
+	var me struct {
+		ID string `json:"id"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/me", nil, nil, &me); err != nil {
+		return ""
+	}
+	return me.ID
+}
+
 // Playlists returns "Liked Songs" followed by the user's playlists.
 func (c *Client) Playlists(ctx context.Context) ([]Playlist, error) {
 	type apiPlaylist struct {
@@ -178,8 +200,12 @@ func (c *Client) Playlists(ctx context.Context) ([]Playlist, error) {
 		Name string `json:"name"`
 		URI  string `json:"uri"`
 		// Feb 2026: "tracks" was renamed "items". Accept both.
-		Items  *struct{ Total int } `json:"items"`
-		Tracks *struct{ Total int } `json:"tracks"`
+		Items         *struct{ Total int } `json:"items"`
+		Tracks        *struct{ Total int } `json:"tracks"`
+		Collaborative bool                 `json:"collaborative"`
+		Owner         struct {
+			ID string `json:"id"`
+		} `json:"owner"`
 	}
 	raw, err := fetchAll[apiPlaylist](ctx, c, "/me/playlists", url.Values{"limit": {"50"}}, maxPlaylists)
 	if err != nil {
@@ -193,6 +219,7 @@ func (c *Client) Playlists(ctx context.Context) ([]Playlist, error) {
 		return nil, err
 	}
 
+	me := c.userID(ctx)
 	out := []Playlist{{ID: "liked", Name: "Liked Songs", Tracks: liked.Total, Liked: true}}
 	for _, p := range raw {
 		n := 0
@@ -202,14 +229,76 @@ func (c *Client) Playlists(ctx context.Context) ([]Playlist, error) {
 		case p.Tracks != nil:
 			n = p.Tracks.Total
 		}
-		out = append(out, Playlist{ID: p.ID, Name: p.Name, URI: p.URI, Tracks: n})
+		out = append(out, Playlist{
+			ID: p.ID, Name: p.Name, URI: p.URI, Tracks: n,
+			Locked: me != "" && p.Owner.ID != me && !p.Collaborative,
+		})
 	}
 	return out, nil
 }
 
-// Tracks returns the playable tracks of a playlist (first 500).
+// Albums returns the user's saved albums as playlist-shaped entries.
+func (c *Client) Albums(ctx context.Context) ([]Playlist, error) {
+	raw, err := fetchAll[struct {
+		Album struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			URI         string `json:"uri"`
+			ReleaseDate string `json:"release_date"`
+			TotalTracks int    `json:"total_tracks"`
+			Artists     []struct {
+				Name string `json:"name"`
+			} `json:"artists"`
+			Images []apiImage `json:"images"`
+		} `json:"album"`
+	}](ctx, c, "/me/albums", url.Values{"limit": {"50"}}, maxPlaylists)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]Playlist, 0, len(raw))
+	for _, it := range raw {
+		a := it.Album
+		if a.ID == "" {
+			continue
+		}
+		names := make([]string, len(a.Artists))
+		for i, ar := range a.Artists {
+			names[i] = ar.Name
+		}
+		out = append(out, Playlist{
+			ID: a.ID, Name: a.Name, URI: a.URI, Tracks: a.TotalTracks,
+			Album: true, Artist: strings.Join(names, ", "),
+			Year: strings.SplitN(a.ReleaseDate, "-", 2)[0], ImageURL: pickImage(a.Images),
+		})
+	}
+	return out, nil
+}
+
+// albumTracks returns the playable tracks of an album. Album listings omit the
+// album itself, so name and art come from the album entry.
+func (c *Client) albumTracks(ctx context.Context, pl Playlist) ([]Track, error) {
+	raw, err := fetchAll[apiTrack](ctx, c, "/albums/"+url.PathEscape(pl.ID)+"/tracks",
+		url.Values{"limit": {"50"}}, maxTracks)
+	if err != nil {
+		return nil, err
+	}
+	var tracks []Track
+	for i := range raw {
+		if t, ok := raw[i].toTrack(); ok {
+			t.Album, t.ImageURL = pl.Name, pl.ImageURL
+			tracks = append(tracks, t)
+		}
+	}
+	return tracks, nil
+}
+
+// Tracks returns the playable tracks of a playlist or album (first 500).
 func (c *Client) Tracks(ctx context.Context, pl Playlist) ([]Track, error) {
 	var tracks []Track
+	if pl.Album {
+		return c.albumTracks(ctx, pl)
+	}
 	if pl.Liked {
 		raw, err := fetchAll[struct {
 			Track *apiTrack `json:"track"`
@@ -231,7 +320,7 @@ func (c *Client) Tracks(ctx context.Context, pl Playlist) ([]Track, error) {
 	}](ctx, c, "/playlists/"+url.PathEscape(pl.ID)+"/items", url.Values{"limit": {"50"}}, maxTracks)
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status == http.StatusForbidden {
-		return nil, errors.New("Spotify only exposes tracks of playlists you own or collaborate on")
+		return nil, ErrPlaylistForbidden
 	}
 	if err != nil {
 		return nil, err

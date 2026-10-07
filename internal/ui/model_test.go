@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -52,7 +53,15 @@ func press(tm tea.Model, keys ...string) tea.Model {
 	return tm
 }
 
-func init() { refreshDelay = 0 }
+func init() {
+	refreshDelay = 0
+	// Keep tests independent of the terminal they happen to run in.
+	os.Setenv("SPOTICLI_COVER", "blocks")
+}
+
+func tmModel(m Model) tea.Model { return m }
+
+func winSize(w, h int) tea.Msg { return tea.WindowSizeMsg{Width: w, Height: h} }
 
 // boot returns a model of the given size that has finished its initial load.
 func boot(w, h int) tea.Model {
@@ -149,5 +158,80 @@ func TestSidebarScrollsToKeepCursorVisible(t *testing.T) {
 	}
 	if v := tm.View(); !strings.Contains(v, "Acoustic Even") {
 		t.Errorf("last playlist should have scrolled into view:\n%s", v)
+	}
+}
+
+func TestAlbumsTabLoadsListsAndPlays(t *testing.T) {
+	tm := boot(110, 32)
+	if strings.Contains(tm.View(), "Albums · ") {
+		t.Fatal("albums should not load before the tab is opened")
+	}
+
+	tm = press(tm, "2")
+	v := tm.View()
+	for _, want := range []string{"Albums · 10", "Afterglow", "Static Bloom"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("albums view is missing %q:\n%s", want, v)
+		}
+	}
+	// Opening the tab must not replace the tracks the user was looking at.
+	if !strings.Contains(v, "Neon Horizons") {
+		t.Error("switching tabs should keep the open track table")
+	}
+
+	tm = press(tm, "j", "enter") // second album: Small Hours
+	v = tm.View()
+	if !strings.Contains(v, "Small Hours — Wren & the Tides · 2 tracks") || strings.Contains(v, "Neon Horizons") {
+		t.Errorf("album tracks not shown:\n%s", v)
+	}
+
+	tm = press(tm, "enter")
+	if v = tm.View(); !strings.Contains(v, "▶ Playing") || !strings.Contains(v, "Paper Planes in July") {
+		t.Errorf("album track should play:\n%s", v)
+	}
+
+	// Back on playlists, the cursor is where it was left.
+	if v = press(tm, "1").View(); !strings.Contains(v, "Playlists · 16") {
+		t.Errorf("tab 1 should return to playlists:\n%s", v)
+	}
+}
+
+func TestTabBracketsCycle(t *testing.T) {
+	tm := press(boot(110, 32), "]")
+	if !strings.Contains(tm.View(), "Albums · ") {
+		t.Error("] should go to albums")
+	}
+	if tm = press(tm, "["); !strings.Contains(tm.View(), "Playlists · 16") {
+		t.Error("[ should go back to playlists")
+	}
+}
+
+func TestLockedPlaylistsAreMarkedAndCorrectedByLoading(t *testing.T) {
+	tm := boot(110, 40)
+	if v := tm.View(); !strings.Contains(v, "⊘ Sunday Morning") || !strings.Contains(v, "⊘ Acoustic Evenings") {
+		t.Fatalf("followed playlists should be marked:\n%s", v)
+	}
+	locked := func(name string) bool {
+		for _, p := range tm.(Model).side[tabPlaylists].items {
+			if p.Name == name {
+				return p.Locked
+			}
+		}
+		t.Fatalf("no playlist %q", name)
+		return false
+	}
+
+	for i := 0; i < 14; i++ {
+		tm = press(tm, "j")
+	}
+	tm = press(tm, "enter") // Sunday Morning: guessed locked, but its tracks load
+	if locked("Sunday Morning") {
+		t.Error("a playlist whose tracks load should be unlocked")
+	}
+
+	tm = press(tm, "h", "j", "enter") // Acoustic Evenings: really forbidden
+	v := tm.View()
+	if !locked("Acoustic Evenings") || !strings.Contains(v, "only exposes tracks of playlists you own") {
+		t.Errorf("forbidden playlist should stay locked and explain why:\n%s", v)
 	}
 }

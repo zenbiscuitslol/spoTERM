@@ -54,7 +54,9 @@ func main() {
 	}
 
 	p := tea.NewProgram(ui.New(be), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	_, err := p.Run()
+	ui.Cleanup(os.Stdout, os.Getenv) // drop the cover image from the terminal
+	if err != nil {
 		fatal(err)
 	}
 }

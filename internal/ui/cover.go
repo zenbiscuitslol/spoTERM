@@ -3,25 +3,28 @@ package ui
 import (
 	"fmt"
 	"image"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// coverRenderer draws an image using half-block characters: each terminal
-// cell shows two vertically stacked pixels (foreground = top, background =
-// bottom). This works in any truecolor terminal; Lip Gloss downgrades the
-// colors automatically on terminals with fewer colors.
+// coverRenderer draws an image. By default it uses half-block characters: each
+// terminal cell shows two vertically stacked pixels (foreground = top,
+// background = bottom). This works in any truecolor terminal; Lip Gloss
+// downgrades the colors automatically on terminals with fewer colors. Kitty
+// and Ghostty get the real image instead (see cover_kitty.go).
 //
 // Swap the source with SetImage once real album art has been downloaded.
 type coverRenderer struct {
 	img        image.Image
+	mode       coverMode
 	cache      []string
 	cols, rows int
 }
 
 func newCoverRenderer(img image.Image) *coverRenderer {
-	return &coverRenderer{img: img}
+	return &coverRenderer{img: img, mode: detectCoverMode(os.Getenv)}
 }
 
 func (c *coverRenderer) SetImage(img image.Image) {
@@ -36,6 +39,12 @@ func (c *coverRenderer) Render(cols, rows int) []string {
 	}
 	if c.cache != nil && c.cols == cols && c.rows == rows {
 		return c.cache
+	}
+	if c.mode == coverKitty {
+		if out := c.renderKitty(cols, rows); out != nil {
+			c.cache, c.cols, c.rows = out, cols, rows
+			return out
+		}
 	}
 
 	b := c.img.Bounds()

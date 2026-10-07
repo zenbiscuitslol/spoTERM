@@ -47,13 +47,45 @@ func (b *Backend) Playlists(context.Context) ([]spotify.Playlist, error) {
 		out[i] = spotify.Playlist{
 			ID: fmt.Sprintf("mock:%d", i), URI: fmt.Sprintf("mock:%d", i),
 			Name: p.name, Tracks: p.tracks, Liked: i == 0,
+			// 14: followed but readable (a wrong guess); 15: really forbidden.
+			Locked: i == 14 || i == 15,
 		}
 	}
 	return out, nil
 }
 
-func (b *Backend) Tracks(context.Context, spotify.Playlist) ([]spotify.Track, error) {
-	return Tracks(), nil
+// Albums derives saved albums from the sample tracks.
+func (b *Backend) Albums(context.Context) ([]spotify.Playlist, error) {
+	var out []spotify.Playlist
+	seen := map[string]int{}
+	for _, t := range Tracks() {
+		if i, ok := seen[t.Album]; ok {
+			out[i].Tracks++
+			continue
+		}
+		seen[t.Album] = len(out)
+		out = append(out, spotify.Playlist{
+			ID: "mock:album:" + t.Album, URI: "mock:album:" + t.Album, Name: t.Album,
+			Tracks: 1, Album: true, Artist: t.Artist, Year: "2024", ImageURL: coverURL,
+		})
+	}
+	return out, nil
+}
+
+func (b *Backend) Tracks(_ context.Context, pl spotify.Playlist) ([]spotify.Track, error) {
+	if pl.ID == "mock:15" {
+		return nil, spotify.ErrPlaylistForbidden
+	}
+	if !pl.Album {
+		return Tracks(), nil
+	}
+	var out []spotify.Track
+	for _, t := range Tracks() {
+		if t.Album == pl.Name {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 func (b *Backend) progress() time.Duration {

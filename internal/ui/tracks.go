@@ -19,11 +19,15 @@ func (m Model) tracksView(w, h int) string {
 	inner := w - 2
 	focused := m.focus == paneTracks
 
-	if m.open < 0 {
-		return panel("Tracks", []string{styleMuted.Render(" Select a playlist and press enter")}, w, h, focused)
+	if !m.hasOpen {
+		return panel("Tracks", []string{styleMuted.Render(" Select a playlist or album and press enter")}, w, h, focused)
 	}
-	pl := m.playlists[m.open]
-	title := fmt.Sprintf("%s · %d tracks", ansi.Truncate(pl.Name, max(inner-20, 8), "…"), pl.Tracks)
+	pl := m.opened
+	name := pl.Name
+	if pl.Album && pl.Artist != "" {
+		name += " — " + pl.Artist
+	}
+	title := fmt.Sprintf("%s · %d tracks", ansi.Truncate(name, max(inner-20, 8), "…"), pl.Tracks)
 
 	switch {
 	case m.trErr != "":

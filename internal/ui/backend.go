@@ -12,6 +12,9 @@ import (
 // real implementation and *mock.Backend a fake for --demo and tests.
 type Backend interface {
 	Playlists(ctx context.Context) ([]spotify.Playlist, error)
+	// Albums returns saved albums as playlist-shaped entries (Album set);
+	// Tracks and Play accept them like any playlist.
+	Albums(ctx context.Context) ([]spotify.Playlist, error)
 	Tracks(ctx context.Context, pl spotify.Playlist) ([]spotify.Track, error)
 	// Playback returns nil, nil when nothing is playing on any device.
 	Playback(ctx context.Context) (*spotify.State, error)

@@ -58,6 +58,7 @@ func TestPlaylistsAcceptsRenamedItemsField(t *testing.T) {
 			{"id":"a","name":"New","uri":"spotify:playlist:a","items":{"total":7}},
 			{"id":"b","name":"Old","uri":"spotify:playlist:b","tracks":{"total":3}}],"next":null}`),
 		"GET /me/tracks": js(`{"total":42,"items":[]}`),
+		"GET /me":        js(`{"id":"me"}`),
 	})
 	got, err := c.Playlists(context.Background())
 	if err != nil {
@@ -82,6 +83,7 @@ func TestPlaylistsFollowsPagination(t *testing.T) {
 			js(fmt.Sprintf(`{"items":[{"id":"1","name":"One"}],"next":"%s/me/playlists?offset=50"}`, base))(w, r)
 		},
 		"GET /me/tracks": js(`{"total":0}`),
+		"GET /me":        js(`{"id":"me"}`),
 	})
 	base = c.base
 	got, err := c.Playlists(context.Background())
@@ -219,5 +221,99 @@ func TestRateLimitMessage(t *testing.T) {
 	_, err := c.Playback(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "retry in 7s") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAlbumsDecodes(t *testing.T) {
+	c, _ := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /me/albums": js(`{"items":[
+			{"album":{"id":"al1","name":"Afterglow","uri":"spotify:album:al1","release_date":"2021-05-14","total_tracks":9,
+			  "artists":[{"name":"A"},{"name":"B"}],
+			  "images":[{"url":"big","width":640},{"url":"mid","width":300},{"url":"small","width":64}]}},
+			{"album":{"id":"al2","name":"Year Only","uri":"spotify:album:al2","release_date":"1999","total_tracks":1,"artists":[],"images":[]}},
+			{"album":null}
+		],"next":null}`),
+	})
+	got, err := c.Albums(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 albums (null skipped), got %+v", got)
+	}
+	a := got[0]
+	if !a.Album || a.Name != "Afterglow" || a.Artist != "A, B" || a.Year != "2021" || a.Tracks != 9 || a.ImageURL != "mid" {
+		t.Errorf("album decoded wrong: %+v", a)
+	}
+	if got[1].Year != "1999" {
+		t.Errorf("year-only release date: %+v", got[1])
+	}
+}
+
+func TestAlbumTracksUseAlbumEndpointAndFillAlbumInfo(t *testing.T) {
+	c, log := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /albums/al1/tracks": js(`{"items":[
+			{"uri":"spotify:track:1","name":"One","type":"track","duration_ms":1000,"artists":[{"name":"A"}]},
+			{"uri":"spotify:track:2","name":"Two","type":"track","duration_ms":2000,"artists":[{"name":"A"}]}
+		],"next":null}`),
+	})
+	got, err := c.Tracks(context.Background(), Playlist{ID: "al1", Name: "Afterglow", Album: true, ImageURL: "mid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Album != "Afterglow" || got[0].ImageURL != "mid" {
+		t.Fatalf("album tracks wrong: %+v", got)
+	}
+	if (*log)[0].Path != "/albums/al1/tracks" {
+		t.Errorf("wrong endpoint: %s", (*log)[0].Path)
+	}
+}
+
+func TestPlayAlbumUsesContextURI(t *testing.T) {
+	c, log := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"PUT /me/player/play": js(``),
+	})
+	tracks := []Track{{URI: "spotify:track:1"}, {URI: "spotify:track:2"}}
+	pl := Playlist{ID: "al1", URI: "spotify:album:al1", Album: true}
+	if err := c.Play(context.Background(), pl, tracks, 1); err != nil {
+		t.Fatal(err)
+	}
+	b := (*log)[0].Body
+	if !strings.Contains(b, `"context_uri":"spotify:album:al1"`) || !strings.Contains(b, `spotify:track:2`) {
+		t.Errorf("body: %s", b)
+	}
+}
+
+func TestPlaylistsMarkFollowedOnesLocked(t *testing.T) {
+	c, _ := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /me": js(`{"id":"me"}`),
+		"GET /me/playlists": js(`{"items":[
+			{"id":"own","name":"Mine","owner":{"id":"me"}},
+			{"id":"fol","name":"Followed","owner":{"id":"someone"}},
+			{"id":"col","name":"Shared","owner":{"id":"someone"},"collaborative":true}],"next":null}`),
+		"GET /me/tracks": js(`{"total":0}`),
+	})
+	got, err := c.Playlists(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := map[string]bool{}
+	for _, p := range got {
+		locked[p.ID] = p.Locked
+	}
+	if locked["liked"] || locked["own"] || locked["col"] || !locked["fol"] {
+		t.Errorf("only the followed playlist should be locked: %v", locked)
+	}
+}
+
+func TestPlaylistsNothingLockedWhenUserUnknown(t *testing.T) {
+	c, _ := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /me":           apiErr(500, ""),
+		"GET /me/playlists": js(`{"items":[{"id":"x","name":"X","owner":{"id":"someone"}}],"next":null}`),
+		"GET /me/tracks":    js(`{"total":0}`),
+	})
+	got, err := c.Playlists(context.Background())
+	if err != nil || got[1].Locked {
+		t.Fatalf("should not guess without knowing the user: %+v %v", got, err)
 	}
 }

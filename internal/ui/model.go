@@ -3,6 +3,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"image"
 	"time"
 
@@ -32,10 +33,37 @@ const (
 	paneTracks
 )
 
+// sideTab selects what the sidebar lists.
+type sideTab int
+
+const (
+	tabPlaylists sideTab = iota
+	tabAlbums
+	numTabs
+)
+
+func (t sideTab) String() string {
+	if t == tabAlbums {
+		return "Albums"
+	}
+	return "Playlists"
+}
+
+// sideList is one sidebar tab's contents and scroll state. Albums are
+// playlist-shaped (Album set), so both tabs share the open/play flow.
+type sideList struct {
+	items          []spotify.Playlist
+	loaded         bool
+	loading        bool
+	err            string
+	cursor, offset int
+}
+
 // Messages produced by background commands.
 type (
-	tickMsg      time.Time
-	playlistsMsg struct {
+	tickMsg time.Time
+	listMsg struct {
+		tab  sideTab
 		list []spotify.Playlist
 		err  error
 	}
@@ -61,15 +89,13 @@ type Model struct {
 
 	focus pane
 
-	// Sidebar.
-	playlists []spotify.Playlist
-	plLoaded  bool
-	plErr     string
-	plCursor  int
-	plOffset  int
+	// Sidebar: one list per tab.
+	tab  sideTab
+	side [numTabs]sideList
 
-	// Track table for the opened playlist.
-	open      int // index into playlists, -1 = none
+	// Track table for the opened playlist or album.
+	opened    spotify.Playlist
+	hasOpen   bool
 	tracks    []spotify.Track
 	trLoading bool
 	trErr     string
@@ -93,17 +119,18 @@ type Model struct {
 }
 
 func New(be Backend) Model {
-	return Model{
+	m := Model{
 		be:    be,
-		open:  -1,
 		viz:   newVisualizer(),
 		cover: newCoverRenderer(nil),
 	}
+	m.side[tabPlaylists].loading = true // Init loads it
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
 	m.polling = true // the first poll is issued below
-	return tea.Batch(tick(), m.loadPlaylists(), m.pollCmd())
+	return tea.Batch(tick(), m.loadList(tabPlaylists), m.pollCmd())
 }
 
 func tick() tea.Cmd {
@@ -120,10 +147,18 @@ func call[T any](timeout time.Duration, f func(ctx context.Context) T) tea.Cmd {
 	}
 }
 
-func (m Model) loadPlaylists() tea.Cmd {
+func (m Model) loadList(tab sideTab) tea.Cmd {
 	return call(30*time.Second, func(ctx context.Context) tea.Msg {
-		l, err := m.be.Playlists(ctx)
-		return playlistsMsg{l, err}
+		var (
+			l   []spotify.Playlist
+			err error
+		)
+		if tab == tabAlbums {
+			l, err = m.be.Albums(ctx)
+		} else {
+			l, err = m.be.Playlists(ctx)
+		}
+		return listMsg{tab, l, err}
 	})
 }
 
@@ -172,7 +207,7 @@ func (m Model) dims() dims {
 	return dims{sideW, m.w - sideW, bodyH, bodyH - npH, npH}
 }
 
-func (d dims) sideRows() int  { return d.bodyH - 2 }
+func (d dims) sideRows() int  { return d.bodyH - 3 }   // borders + tab strip
 func (d dims) trackRows() int { return d.tracksH - 3 } // borders + header row
 
 // --- update -----------------------------------------------------------------
@@ -191,22 +226,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m.onTick()
 
-	case playlistsMsg:
-		m.plLoaded = true
+	case listMsg:
+		sl := &m.side[msg.tab]
+		sl.loaded, sl.loading = true, false
 		if msg.err != nil {
-			m.plErr = msg.err.Error()
+			sl.err = msg.err.Error()
 			return m, nil
 		}
-		m.playlists = msg.list
-		if len(m.playlists) > 0 {
-			return m.openPlaylist(0, false)
+		sl.items = msg.list
+		// Only the initial playlist load opens something; opening the first
+		// album would replace the tracks the user is looking at.
+		if msg.tab == tabPlaylists && len(sl.items) > 0 {
+			return m.openAt(0, false)
 		}
 
 	case tracksMsg:
-		if m.open < 0 || m.playlists[m.open].ID != msg.pl.ID {
+		if !m.hasOpen || m.opened.ID != msg.pl.ID {
 			return m, nil // stale: user opened something else meanwhile
 		}
 		m.trLoading = false
+		// Correct the owner-based guess in the sidebar with what Spotify said.
+		switch {
+		case errors.Is(msg.err, spotify.ErrPlaylistForbidden):
+			m.setLocked(msg.pl.ID, true)
+		case msg.err == nil:
+			m.setLocked(msg.pl.ID, false)
+		}
 		if msg.err != nil {
 			m.trErr = msg.err.Error()
 			return m, nil
@@ -285,9 +330,18 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.move(1)
 
+	case "1":
+		return m.switchTab(tabPlaylists)
+	case "2":
+		return m.switchTab(tabAlbums)
+	case "[":
+		return m.switchTab((m.tab + numTabs - 1) % numTabs)
+	case "]":
+		return m.switchTab((m.tab + 1) % numTabs)
+
 	case "enter":
 		if m.focus == paneSidebar {
-			return m.openPlaylist(m.plCursor, true)
+			return m.openAt(m.side[m.tab].cursor, true)
 		}
 		return m.playSelected()
 
@@ -304,8 +358,9 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) move(delta int) {
 	d := m.dims()
 	if m.focus == paneSidebar {
-		m.plCursor = clamp(m.plCursor+delta, 0, max(len(m.playlists)-1, 0))
-		m.plOffset = follow(m.plCursor, m.plOffset, d.sideRows())
+		sl := &m.side[m.tab]
+		sl.cursor = clamp(sl.cursor+delta, 0, max(len(sl.items)-1, 0))
+		sl.offset = follow(sl.cursor, sl.offset, d.sideRows())
 		return
 	}
 	m.trCursor = clamp(m.trCursor+delta, 0, max(len(m.tracks)-1, 0))
@@ -315,25 +370,56 @@ func (m *Model) move(delta int) {
 // reclamp keeps scroll offsets valid after a resize.
 func (m *Model) reclamp() {
 	d := m.dims()
-	m.plOffset = follow(m.plCursor, m.plOffset, d.sideRows())
+	for i := range m.side {
+		sl := &m.side[i]
+		sl.offset = follow(sl.cursor, sl.offset, d.sideRows())
+	}
 	m.trOffset = follow(m.trCursor, m.trOffset, d.trackRows())
 }
 
-func (m Model) openPlaylist(i int, focusTracks bool) (tea.Model, tea.Cmd) {
-	m.open = i
+// setLocked updates the dimmed state of a playlist in whichever tab holds it.
+func (m *Model) setLocked(id string, locked bool) {
+	for i := range m.side {
+		for j := range m.side[i].items {
+			if p := &m.side[i].items[j]; p.ID == id && !p.Album && !p.Liked {
+				p.Locked = locked
+			}
+		}
+	}
+}
+
+// switchTab shows another sidebar list, loading it on first use (or retrying
+// after an error).
+func (m Model) switchTab(t sideTab) (tea.Model, tea.Cmd) {
+	m.tab, m.focus = t, paneSidebar
+	sl := &m.side[t]
+	if sl.loading || (sl.loaded && sl.err == "") {
+		return m, nil
+	}
+	sl.loading, sl.err = true, ""
+	return m, m.loadList(t)
+}
+
+// openAt opens entry i of the current tab's list in the track table.
+func (m Model) openAt(i int, focusTracks bool) (tea.Model, tea.Cmd) {
+	items := m.side[m.tab].items
+	if i < 0 || i >= len(items) {
+		return m, nil
+	}
+	m.opened, m.hasOpen = items[i], true
 	m.tracks, m.trErr, m.trLoading = nil, "", true
 	m.trCursor, m.trOffset = 0, 0
 	if focusTracks {
 		m.focus = paneTracks
 	}
-	return m, m.loadTracks(m.playlists[i])
+	return m, m.loadTracks(m.opened)
 }
 
 func (m Model) playSelected() (tea.Model, tea.Cmd) {
-	if m.open < 0 || m.trCursor >= len(m.tracks) {
+	if !m.hasOpen || m.trCursor >= len(m.tracks) {
 		return m, nil
 	}
-	pl, tracks, idx := m.playlists[m.open], m.tracks, m.trCursor
+	pl, tracks, idx := m.opened, m.tracks, m.trCursor
 	m.setStatus("Starting " + tracks[idx].Title + "…")
 	return m, m.act(func(ctx context.Context, be Backend) error {
 		return be.Play(ctx, pl, tracks, idx)
@@ -391,5 +477,5 @@ func (m Model) footer() string {
 		return " " + styleErr.Render(fit(m.status, m.w-2))
 	}
 	return styleMuted.Render(fit(
-		" ↑↓ move · tab pane · enter open/play · space pause · n/p skip · q quit", m.w))
+		" ↑↓ move · tab pane · 1/2 list · enter open/play · space pause · n/p skip · q quit", m.w))
 }
