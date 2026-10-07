@@ -81,6 +81,7 @@ type (
 		img image.Image
 		err error
 	}
+	playerMsg struct{ err error }
 )
 
 type Model struct {
@@ -105,6 +106,8 @@ type Model struct {
 	// Playback, mirrored from the API and interpolated between polls.
 	state    *spotify.State
 	elapsed  time.Duration
+	drift    time.Duration // pending correction toward Spotify's position, absorbed gradually
+	lastTick time.Time
 	coverURL string
 
 	// Housekeeping.
@@ -116,21 +119,50 @@ type Model struct {
 
 	viz   *visualizer
 	cover *coverRenderer
+
+	// startPlayer brings up the built-in audio player; nil when spotiCLI only
+	// controls other devices.
+	startPlayer func(ctx context.Context) error
 }
 
-func New(be Backend) Model {
+// Option configures a Model.
+type Option func(*Model)
+
+// WithPlayer runs start in the background at launch (it should start the
+// audio player and wait until Spotify can see it) and reports the result in
+// the footer.
+func WithPlayer(start func(ctx context.Context) error) Option {
+	return func(m *Model) { m.startPlayer = start }
+}
+
+// WithNotice shows msg in the footer at launch.
+func WithNotice(msg string) Option {
+	return func(m *Model) { m.setStatus(msg) }
+}
+
+func New(be Backend, opts ...Option) Model {
 	m := Model{
 		be:    be,
 		viz:   newVisualizer(),
 		cover: newCoverRenderer(nil),
 	}
 	m.side[tabPlaylists].loading = true // Init loads it
+	for _, o := range opts {
+		o(&m)
+	}
+	if m.startPlayer != nil {
+		m.setStatus("Starting player…")
+	}
 	return m
 }
 
 func (m Model) Init() tea.Cmd {
 	m.polling = true // the first poll is issued below
-	return tea.Batch(tick(), m.loadList(tabPlaylists), m.pollCmd())
+	cmds := []tea.Cmd{tick(), m.loadList(tabPlaylists), m.pollCmd()}
+	if m.startPlayer != nil {
+		cmds = append(cmds, m.playerCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 func tick() tea.Cmd {
@@ -166,6 +198,14 @@ func (m Model) loadTracks(pl spotify.Playlist) tea.Cmd {
 	return call(45*time.Second, func(ctx context.Context) tea.Msg {
 		t, err := m.be.Tracks(ctx, pl)
 		return tracksMsg{pl, t, err}
+	})
+}
+
+// playerCmd starts the audio player. The generous timeout covers the one-time
+// browser login on first run.
+func (m Model) playerCmd() tea.Cmd {
+	return call(3*time.Minute, func(ctx context.Context) tea.Msg {
+		return playerMsg{m.startPlayer(ctx)}
 	})
 }
 
@@ -224,7 +264,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onKey(msg)
 
 	case tickMsg:
-		return m.onTick()
+		return m.onTick(time.Time(msg))
 
 	case listMsg:
 		sl := &m.side[msg.tab]
@@ -264,14 +304,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(msg.err.Error())
 			return m, nil
 		}
+		prev := m.state
 		m.state = msg.state
 		if msg.state == nil {
 			return m, nil
 		}
-		m.elapsed = msg.state.Progress
+		// Spotify's position is only accurate to a poll's latency. When we're
+		// already tracking the same playing track, absorb the difference over
+		// the next ticks instead of snapping, which makes the bar jump.
+		d := msg.state.Progress - m.elapsed
+		if prev != nil && prev.Track.URI == msg.state.Track.URI && prev.Playing && msg.state.Playing &&
+			d > -2*time.Second && d < 2*time.Second {
+			m.drift = d
+		} else {
+			m.elapsed, m.drift = msg.state.Progress, 0
+		}
 		if url := msg.state.Track.ImageURL; url != "" && url != m.coverURL {
 			m.coverURL = url
 			return m, m.loadCover(url)
+		}
+
+	case playerMsg:
+		if msg.err != nil {
+			m.setStatus("player: " + msg.err.Error())
+		} else {
+			m.setStatus("Player ready")
 		}
 
 	case coverMsg:
@@ -284,12 +341,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) onTick() (tea.Model, tea.Cmd) {
+func (m Model) onTick(now time.Time) (tea.Model, tea.Cmd) {
 	m.ticks++
+	// Advance by the real time since the last frame: a fixed 50ms per tick
+	// drifts (and stutters) whenever a frame runs late.
+	dt := tickEvery
+	if !now.IsZero() {
+		if d := now.Sub(m.lastTick); !m.lastTick.IsZero() && d > 0 && d <= 4*tickEvery {
+			dt = d
+		}
+		m.lastTick = now
+	}
 	playing := m.state != nil && m.state.Playing
-	m.viz.Step(tickEvery.Seconds(), playing)
+	m.viz.Step(dt.Seconds(), playing)
 	if playing {
-		m.elapsed += tickEvery
+		// Pay back pending drift by running slightly fast or slow (at most
+		// 50%), so the position never jumps and never goes backwards.
+		c := max(min(m.drift/8, dt/2), -dt/2)
+		m.drift -= c
+		m.elapsed += dt + c
 	}
 	if m.status != "" && m.ticks-m.statusAt > statusTTL {
 		m.status = ""
@@ -468,7 +538,7 @@ func (m Model) View() string {
 		m.tracksView(d.mainW, d.tracksH),
 		m.nowPlayingView(d.mainW, d.npH),
 	)
-	body := lipgloss.JoinHorizontal(lipgloss.Top, m.sidebarView(d.sideW, d.bodyH), main)
+	body := joinBody(m.sidebarView(d.sideW, d.bodyH), main, d.sideW, d.mainW)
 	return body + "\n" + m.footer()
 }
 

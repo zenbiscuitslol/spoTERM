@@ -2,15 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/zenbiscuitslol/spotiCLI/internal/mock"
+	"github.com/zenbiscuitslol/spotiCLI/internal/player"
 	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
 	"github.com/zenbiscuitslol/spotiCLI/internal/ui"
 )
+
+// deviceName is how spotiCLI's built-in player shows up in Spotify.
+const deviceName = "spotiCLI"
 
 const setupHelp = `SPOTIFY_CLIENT_ID is not set.
 
@@ -27,6 +32,7 @@ Try the UI without an account: spotici --demo
 func main() {
 	demo := flag.Bool("demo", false, "use built-in sample data instead of Spotify")
 	logout := flag.Bool("logout", false, "forget the cached Spotify login and exit")
+	noPlayer := flag.Bool("no-player", false, "don't start the built-in player; control another Spotify device instead")
 	flag.Parse()
 
 	if *logout {
@@ -37,7 +43,11 @@ func main() {
 		return
 	}
 
-	var be ui.Backend
+	var (
+		be   ui.Backend
+		opts []ui.Option
+		mgr  *player.Manager
+	)
 	if *demo {
 		be = mock.New()
 	} else {
@@ -51,10 +61,31 @@ func main() {
 			fatal(err)
 		}
 		be = c
+
+		if !*noPlayer {
+			var err error
+			if mgr, err = player.New(deviceName); err == nil {
+				c.Device = deviceName
+				opts = append(opts, ui.WithPlayer(func(ctx context.Context) error {
+					if err := mgr.Start(); err != nil {
+						return err
+					}
+					return c.WaitForDevice(ctx, deviceName)
+				}))
+			} else if errors.Is(err, player.ErrNotInstalled) {
+				// Still useful against another Spotify device.
+				opts = append(opts, ui.WithNotice("go-librespot not installed: using other Spotify devices (see README)"))
+			} else {
+				fatal(err)
+			}
+		}
 	}
 
-	p := tea.NewProgram(ui.New(be), tea.WithAltScreen())
+	p := tea.NewProgram(ui.New(be, opts...), tea.WithAltScreen())
 	_, err := p.Run()
+	if mgr != nil {
+		mgr.Stop() // don't leave the player running after the TUI is gone
+	}
 	ui.Cleanup(os.Stdout, os.Getenv) // drop the cover image from the terminal
 	if err != nil {
 		fatal(err)

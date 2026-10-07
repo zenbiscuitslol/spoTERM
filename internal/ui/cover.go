@@ -19,6 +19,7 @@ import (
 type coverRenderer struct {
 	img        image.Image
 	mode       coverMode
+	kittyID    int // image ID currently held by the terminal (0 = none)
 	cache      []string
 	cols, rows int
 }

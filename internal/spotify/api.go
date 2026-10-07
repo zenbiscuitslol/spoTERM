@@ -23,6 +23,10 @@ const apiBase = "https://api.spotify.com/v1"
 type Client struct {
 	http *http.Client // adds and refreshes the OAuth token
 	base string       // API root; overridden in tests
+
+	// Device is the name of the preferred playback device (the daemon spotiCLI
+	// manages). When set, Play starts there instead of on whatever is active.
+	Device string
 }
 
 // APIError is a non-2xx response from the Web API.
@@ -389,6 +393,10 @@ func (c *Client) Play(ctx context.Context, pl Playlist, tracks []Track, idx int)
 		body["context_uri"] = pl.URI
 		body["offset"] = map[string]string{"uri": tracks[idx].URI}
 	}
+	if id := c.preferredDevice(ctx); id != "" {
+		_, err := c.do(ctx, http.MethodPut, "/me/player/play", url.Values{"device_id": {id}}, body, nil)
+		return err
+	}
 	return c.player(ctx, http.MethodPut, "/me/player/play", body)
 }
 
@@ -420,30 +428,89 @@ func (c *Client) player(ctx context.Context, method, path string, body any) erro
 	return err
 }
 
-func (c *Client) pickDevice(ctx context.Context) (string, error) {
+type device struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	IsActive     bool   `json:"is_active"`
+	IsRestricted bool   `json:"is_restricted"`
+}
+
+func (c *Client) devices(ctx context.Context) ([]device, error) {
 	var res struct {
-		Devices []struct {
-			ID           string `json:"id"`
-			IsActive     bool   `json:"is_active"`
-			IsRestricted bool   `json:"is_restricted"`
-		} `json:"devices"`
+		Devices []device `json:"devices"`
 	}
 	if _, err := c.do(ctx, http.MethodGet, "/me/player/devices", nil, nil, &res); err != nil {
+		return nil, err
+	}
+	return res.Devices, nil
+}
+
+// preferredDevice returns the ID of the device named c.Device, or "" if none
+// is set or it isn't online.
+func (c *Client) preferredDevice(ctx context.Context) string {
+	if c.Device == "" {
+		return ""
+	}
+	devs, err := c.devices(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, d := range devs {
+		if d.Name == c.Device && !d.IsRestricted && d.ID != "" {
+			return d.ID
+		}
+	}
+	return ""
+}
+
+// deviceWaitInterval is how often WaitForDevice polls; tests shorten it.
+var deviceWaitInterval = 500 * time.Millisecond
+
+// WaitForDevice blocks until a device called name shows up in the user's
+// device list (a freshly started player takes a moment to register), or ctx
+// ends.
+func (c *Client) WaitForDevice(ctx context.Context, name string) error {
+	for {
+		devs, err := c.devices(ctx)
+		if err == nil {
+			for _, d := range devs {
+				if d.Name == name {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("player %q did not appear in Spotify's device list", name)
+		case <-time.After(deviceWaitInterval):
+		}
+	}
+}
+
+func (c *Client) pickDevice(ctx context.Context) (string, error) {
+	devs, err := c.devices(ctx)
+	if err != nil {
 		return "", err
 	}
-	id := ""
-	for _, d := range res.Devices {
+	first, active := "", ""
+	for _, d := range devs {
 		if d.IsRestricted || d.ID == "" {
 			continue
 		}
-		if d.IsActive {
-			return d.ID, nil
+		if c.Device != "" && d.Name == c.Device {
+			return d.ID, nil // our own player beats anything else
 		}
-		if id == "" {
-			id = d.ID
+		if d.IsActive && active == "" {
+			active = d.ID
+		}
+		if first == "" {
+			first = d.ID
 		}
 	}
-	return id, nil
+	if active != "" {
+		return active, nil
+	}
+	return first, nil
 }
 
 // --- Album art -------------------------------------------------------------

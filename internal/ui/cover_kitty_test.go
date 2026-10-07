@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -46,7 +48,8 @@ func TestKittyCoverShape(t *testing.T) {
 	// The transmit sequence is in the first row only, and addresses a virtual
 	// placement of exactly the cell grid we draw.
 	first := out[0]
-	for _, want := range []string{"\x1b_G", "a=T", "U=1", "i=12648430", "c=16", "r=8", "q=2", "f=100"} {
+	id := c.kittyID
+	for _, want := range []string{"\x1b_G", "a=T", "U=1", "C=1", "i=" + strconv.Itoa(id), "c=16", "r=8", "q=2", "f=100"} {
 		if !strings.Contains(first, want) {
 			t.Errorf("transmit sequence is missing %q", want)
 		}
@@ -65,7 +68,7 @@ func TestKittyCoverShape(t *testing.T) {
 		if n := strings.Count(row, string(kitty.Placeholder)); n != cols {
 			t.Errorf("row %d has %d placeholders, want %d", i, n, cols)
 		}
-		if !strings.Contains(row, "\x1b[38;2;192;255;238m") {
+		if !strings.Contains(row, fmt.Sprintf("\x1b[38;2;%d;%d;%dm", id>>16&0xff, id>>8&0xff, id&0xff)) {
 			t.Errorf("row %d: placeholder colour does not encode the image ID", i)
 		}
 	}
@@ -99,5 +102,46 @@ func TestKittyViewFitsTerminal(t *testing.T) {
 		if !strings.Contains(tm.View(), string(kitty.Placeholder)) {
 			t.Errorf("%dx%d: no placeholders rendered", sz[0], sz[1])
 		}
+	}
+}
+
+// A new cover must change the text of every cover row, not just the first:
+// Bubble Tea skips rows whose text is unchanged, and those rows would keep
+// showing the previous cover.
+func TestNewCoverChangesEveryRow(t *testing.T) {
+	c := newCoverRenderer(mock.Cover())
+	c.mode = coverKitty
+	const cols, rows = 16, 8
+	before := append([]string(nil), c.Render(cols, rows)...)
+	oldID := c.kittyID
+
+	c.SetImage(mock.Cover()) // next track
+	after := c.Render(cols, rows)
+	if c.kittyID == oldID {
+		t.Fatal("a new cover must get a new image ID")
+	}
+	for i := range after {
+		if after[i] == before[i] {
+			t.Errorf("row %d is byte-identical to the previous cover's, so it would not be redrawn", i)
+		}
+	}
+	if !strings.Contains(after[0], "d=I") || !strings.Contains(after[0], fmt.Sprintf("i=%d", oldID)) {
+		t.Error("the previous image should be deleted")
+	}
+}
+
+func TestCleanupDeletesTheLastImage(t *testing.T) {
+	c := newCoverRenderer(mock.Cover())
+	c.mode = coverKitty
+	c.Render(8, 4)
+	var sb strings.Builder
+	Cleanup(&sb, env(map[string]string{"SPOTICLI_COVER": "kitty"}))
+	if want := fmt.Sprintf("i=%d", c.kittyID); !strings.Contains(sb.String(), want) || !strings.Contains(sb.String(), "d=I") {
+		t.Errorf("cleanup %q should delete %s", sb.String(), want)
+	}
+	sb.Reset()
+	Cleanup(&sb, env(map[string]string{"SPOTICLI_COVER": "blocks"}))
+	if sb.Len() != 0 {
+		t.Errorf("nothing to clean up in blocks mode, got %q", sb.String())
 	}
 }

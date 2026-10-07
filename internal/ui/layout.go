@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -85,7 +86,7 @@ func panel(title string, body []string, w, h int, focused bool) string {
 	sb.WriteString(top + "\n")
 	side := border.Render("│")
 	for _, l := range block(body, w-2, h-2) {
-		sb.WriteString(side + l + side + "\n")
+		sb.WriteString(side + l + borderMark + side + "\n")
 	}
 	sb.WriteString(border.Render("╰" + strings.Repeat("─", w-2) + "╯"))
 	return sb.String()
@@ -108,4 +109,52 @@ func follow(cursor, offset, visible int) int {
 		return cursor - visible + 1
 	}
 	return offset
+}
+
+// --- column anchoring -------------------------------------------------------
+//
+// Terminals and our width tables disagree about some text (Indic scripts with
+// spacing vowel signs, some emoji). If we only pad with spaces, one such name
+// shifts everything to its right on that row, including the album cover.
+// Anchors fix that: each one is a "move cursor to absolute column" escape, so
+// a miscounted name can only mis-place its own text. They are zero-width to
+// ansi.StringWidth, so layout maths is unaffected.
+
+// at returns the escape that moves the cursor to 0-based screen column x.
+func at(x int) string { return fmt.Sprintf("\x1b[%dG", x+1) }
+
+// borderMark is left by panel() just before each row's right border. It is a
+// control character (zero width), and View swaps it for the anchor escape once
+// the panel's screen column is known.
+const borderMark = "\x00"
+
+// anchorBorders replaces the border marks in a rendered panel with anchors to
+// column x (the panel's right border).
+func anchorBorders(panel string, x int) string {
+	return strings.ReplaceAll(panel, borderMark, at(x))
+}
+
+// joinBody puts the sidebar and main column side by side, anchoring the main
+// column's start and both right borders to fixed screen columns.
+func joinBody(side, main string, sideW, mainW int) string {
+	side = anchorBorders(side, sideW-1)
+	main = anchorBorders(main, sideW+mainW-1)
+	sl, ml := strings.Split(side, "\n"), strings.Split(main, "\n")
+	if len(sl) != len(ml) {
+		return lipgloss.JoinHorizontal(lipgloss.Top, side, main)
+	}
+	out := make([]string, len(sl))
+	for i := range sl {
+		out[i] = sl[i] + at(sideW) + ml[i]
+	}
+	return strings.Join(out, "\n")
+}
+
+// spreadAt is spread with the right-hand text anchored to screen column x.
+func spreadAt(left, right string, w, x int) string {
+	if gap := w - ansi.StringWidth(left) - ansi.StringWidth(right); gap < 1 {
+		left = ansi.Truncate(left, w-ansi.StringWidth(right)-1, "…")
+	}
+	gap := max(w-ansi.StringWidth(left)-ansi.StringWidth(right), 1)
+	return left + strings.Repeat(" ", gap) + at(x) + right
 }

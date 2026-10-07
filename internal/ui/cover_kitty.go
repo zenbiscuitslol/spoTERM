@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
@@ -18,10 +19,21 @@ const (
 	coverKitty                   // Kitty graphics protocol with Unicode placeholders
 )
 
-// kittyImageID identifies the cover inside the terminal. One fixed ID means a
-// new cover simply replaces the previous one. It doubles as the placeholder
-// foreground colour (0xC0FFEE), which is how the protocol links cells to it.
-const kittyImageID = 0xC0FFEE
+// Every transmit gets a fresh image ID, which doubles as the placeholder
+// foreground colour (24 bits), the way the protocol links cells to an image.
+// Reusing one ID would leave the cell text unchanged when the cover changes;
+// Bubble Tea only rewrites changed rows, and the rows it skips kept showing
+// pieces of the previous cover (a band of the old art across the new one). With
+// a new ID every cover row changes, so every row is redrawn.
+const kittyIDBase = 0xC0FFEE
+
+var kittyIDSeq, kittyLastID atomic.Uint32
+
+func newKittyID() int {
+	id := kittyIDBase + int(kittyIDSeq.Add(1)%0xFFFF)
+	kittyLastID.Store(uint32(id))
+	return id
+}
 
 // detectCoverMode picks a renderer. SPOTICLI_COVER=blocks|kitty overrides it.
 //
@@ -53,24 +65,31 @@ func detectCoverMode(getenv func(string) string) coverMode {
 // rewrites a line when it changes, so the image is re-sent only when the
 // cover or its size changes.
 func (c *coverRenderer) renderKitty(cols, rows int) []string {
+	id := newKittyID()
 	var buf bytes.Buffer
+	// Free the previous image (a no-op if it is already gone).
+	if c.kittyID != 0 {
+		buf.WriteString(ansi.KittyGraphics(nil, "a=d", "d=I", fmt.Sprintf("i=%d", c.kittyID), "q=2"))
+	}
 	err := ansi.WriteKittyGraphics(&buf, c.img, &kitty.Options{
 		Action:           kitty.TransmitAndPut,
 		Transmission:     kitty.Direct,
 		Format:           kitty.PNG,
 		Chunk:            true,
 		Quite:            2, // no replies: they would show up as keyboard input
-		ID:               kittyImageID,
+		ID:               id,
 		VirtualPlacement: true,
+		DoNotMoveCursor:  true, // as kitten icat does for placeholders
 		Columns:          cols,
 		Rows:             rows,
 	})
 	if err != nil {
 		return nil // caller falls back to half-blocks
 	}
+	c.kittyID = id
 
 	// Cells are addressed by row/column diacritics; the colour carries the ID.
-	fg := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", kittyImageID>>16&0xff, kittyImageID>>8&0xff, kittyImageID&0xff)
+	fg := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", id>>16&0xff, id>>8&0xff, id&0xff)
 	out := make([]string, rows)
 	for row := range out {
 		var sb strings.Builder
@@ -91,7 +110,7 @@ func (c *coverRenderer) renderKitty(cols, rows int) []string {
 
 // Cleanup removes the cover from the terminal. Call it after the program exits.
 func Cleanup(w io.Writer, getenv func(string) string) {
-	if detectCoverMode(getenv) == coverKitty {
-		io.WriteString(w, ansi.KittyGraphics(nil, "a=d", "d=I", fmt.Sprintf("i=%d", kittyImageID), "q=2"))
+	if id := kittyLastID.Load(); id != 0 && detectCoverMode(getenv) == coverKitty {
+		io.WriteString(w, ansi.KittyGraphics(nil, "a=d", "d=I", fmt.Sprintf("i=%d", id), "q=2"))
 	}
 }

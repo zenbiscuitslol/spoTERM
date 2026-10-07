@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type recorded struct {
@@ -315,5 +316,91 @@ func TestPlaylistsNothingLockedWhenUserUnknown(t *testing.T) {
 	got, err := c.Playlists(context.Background())
 	if err != nil || got[1].Locked {
 		t.Fatalf("should not guess without knowing the user: %+v %v", got, err)
+	}
+}
+
+func devicesJSON(devs ...string) string { // "id:name:active"
+	var items []string
+	for _, d := range devs {
+		p := strings.SplitN(d, ":", 3)
+		items = append(items, fmt.Sprintf(`{"id":%q,"name":%q,"is_active":%s,"is_restricted":false}`, p[0], p[1], p[2]))
+	}
+	return `{"devices":[` + strings.Join(items, ",") + `]}`
+}
+
+func TestPlayPrefersOwnDeviceOverActiveOne(t *testing.T) {
+	c, log := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /me/player/devices": js(devicesJSON("phone:Phone:true", "mine:spotiCLI:false")),
+		"PUT /me/player/play":    js(``),
+	})
+	c.Device = "spotiCLI"
+	pl := Playlist{ID: "p", URI: "spotify:playlist:p"}
+	if err := c.Play(context.Background(), pl, []Track{{URI: "spotify:track:1"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	last := (*log)[len(*log)-1]
+	if last.Method != "PUT" || last.Query != "device_id=mine" {
+		t.Errorf("should play on our device, got %s ?%s", last.Method, last.Query)
+	}
+}
+
+func TestPlayFallsBackWhenOwnDeviceIsOffline(t *testing.T) {
+	c, log := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /me/player/devices": js(devicesJSON("phone:Phone:true")),
+		"PUT /me/player/play":    js(``),
+	})
+	c.Device = "spotiCLI"
+	if err := c.Play(context.Background(), Playlist{URI: "spotify:playlist:p"}, []Track{{URI: "t"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if last := (*log)[len(*log)-1]; last.Query != "" {
+		t.Errorf("should not target a device when ours is offline, got ?%s", last.Query)
+	}
+}
+
+func TestPickDevicePrefersNamedThenActiveThenFirst(t *testing.T) {
+	c, _ := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /me/player/devices": js(devicesJSON("a:First:false", "b:Active:true", "c:spotiCLI:false")),
+	})
+	if id, _ := c.pickDevice(context.Background()); id != "b" {
+		t.Errorf("no preference: want active device b, got %q", id)
+	}
+	c.Device = "spotiCLI"
+	if id, _ := c.pickDevice(context.Background()); id != "c" {
+		t.Errorf("with preference: want c, got %q", id)
+	}
+}
+
+func TestWaitForDevice(t *testing.T) {
+	old := deviceWaitInterval
+	deviceWaitInterval = time.Millisecond
+	t.Cleanup(func() { deviceWaitInterval = old })
+
+	var mu sync.Mutex
+	calls := 0
+	c, _ := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /me/player/devices": func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			calls++
+			n := calls
+			mu.Unlock()
+			if n < 3 { // registers on the third look
+				js(devicesJSON("phone:Phone:true"))(w, r)
+				return
+			}
+			js(devicesJSON("phone:Phone:true", "mine:spotiCLI:false"))(w, r)
+		},
+	})
+	if err := c.WaitForDevice(context.Background(), "spotiCLI"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Errorf("polled %d times, want 3", calls)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := c.WaitForDevice(ctx, "nonexistent"); err == nil || !strings.Contains(err.Error(), "did not appear") {
+		t.Errorf("want a clear timeout error, got %v", err)
 	}
 }

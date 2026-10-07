@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -74,12 +75,19 @@ func (m Model) nowPlayingView(w, h int) string {
 		if i < len(right) {
 			r = right[i]
 		}
-		lines[i] = " " + left + strings.Repeat(" ", gap) + ansi.Truncate(r, rightW, "")
+		// 1 border + 1 pad + cover + gap puts the text column at a fixed
+		// screen column, whatever the lines above it contain.
+		textX := m.dims().sideW + 2 + coverCols + gap
+		lines[i] = " " + left + strings.Repeat(" ", gap) + at(textX) + ansi.Truncate(r, rightW, "")
 	}
 	return panel("Now Playing", lines, w, h, false)
 }
 
-// progressBar renders "1:23 ━━━━●────── 3:45" in exactly w cells.
+// progressBar renders "1:23 ━━━━━━────── 3:45" in exactly w cells.
+//
+// Position is continuous, not per cell: the cell the playhead is in fades from
+// the track colour to the fill colour as it is crossed, so the bar advances
+// smoothly instead of jumping a whole cell every few seconds.
 func progressBar(elapsed, total time.Duration, w int) string {
 	elapsed = max(min(elapsed, total), 0)
 	l, r := fmtDur(elapsed), fmtDur(total)
@@ -87,9 +95,20 @@ func progressBar(elapsed, total time.Duration, w int) string {
 	if barW < 4 || total <= 0 {
 		return styleMuted.Render(l + " / " + r)
 	}
-	pos := clamp(int(float64(barW-1)*float64(elapsed)/float64(total)), 0, barW-1)
-	bar := styleAccent.Render(strings.Repeat("━", pos)) +
-		styleBold.Render("●") +
-		styleMuted.Render(strings.Repeat("─", barW-pos-1))
-	return styleMuted.Render(l) + " " + bar + " " + styleMuted.Render(r)
+
+	x := float64(barW) * float64(elapsed) / float64(total) // 0..barW
+	filled := min(int(x), barW)
+	frac := x - float64(filled)
+
+	var bar strings.Builder
+	if filled > 0 {
+		bar.WriteString(styleAccent.Render(strings.Repeat("━", filled)))
+	}
+	rest := barW - filled
+	if rest > 0 {
+		edge := lipgloss.NewStyle().Foreground(lipgloss.Color(mix(string(colMuted), string(colGreen), frac)))
+		bar.WriteString(edge.Render("━"))
+		bar.WriteString(styleMuted.Render(strings.Repeat("─", rest-1)))
+	}
+	return styleMuted.Render(l) + " " + bar.String() + " " + styleMuted.Render(r)
 }

@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -45,11 +44,21 @@ func (m Model) tracksView(w, h int) string {
 	artistW := rest * 30 / 100
 	albumW := rest - titleW - artistW
 
+	// Screen columns of each table column (the panel starts at the sidebar's
+	// right edge, plus 1 for its border). Anchored so a title the terminal
+	// measures differently than we do only mis-sizes its own cell.
+	x := m.dims().sideW + 1
+	titleX := x + numW + 1
+	artistX := titleX + titleW + 1
+	albumX := artistX + artistW + 1
+	timeX := albumX + albumW + 1
+
 	row := func(num, title, artist, album, dur string, st lipgloss.Style) string {
-		cells := strings.Join([]string{
-			fit(num, numW), fit(title, titleW), fit(artist, artistW), fit(album, albumW),
-		}, " ")
-		return st.Render(cells + " " + fmt.Sprintf("%*s", timeW, dur))
+		// The gutter spaces stay in the string so its visible width is the
+		// full row; the anchors only correct where each cell starts.
+		return st.Render(fit(num, numW) + " " + at(titleX) + fit(title, titleW) + " " + at(artistX) +
+			fit(artist, artistW) + " " + at(albumX) + fit(album, albumW) + " " + at(timeX) +
+			fmt.Sprintf("%*s", timeW, dur))
 	}
 
 	lines := []string{row("#", "Title", "Artist", "Album", "Time", styleMuted.Underline(true))}

@@ -1,12 +1,17 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"github.com/zenbiscuitslol/spotiCLI/internal/mock"
 )
 
@@ -233,5 +238,126 @@ func TestLockedPlaylistsAreMarkedAndCorrectedByLoading(t *testing.T) {
 	v := tm.View()
 	if !locked("Acoustic Evenings") || !strings.Contains(v, "only exposes tracks of playlists you own") {
 		t.Errorf("forbidden playlist should stay locked and explain why:\n%s", v)
+	}
+}
+
+func TestPlayerStartupReportsReady(t *testing.T) {
+	started := false
+	m := New(mock.New(), WithPlayer(func(context.Context) error { started = true; return nil }))
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
+	if !strings.Contains(tm.View(), "Starting player") {
+		t.Error("footer should say the player is starting")
+	}
+	tm = settle(tm, m.Init())
+	if !started {
+		t.Fatal("Init should start the player")
+	}
+	if !strings.Contains(tm.View(), "Player ready") {
+		t.Errorf("footer should report the player is ready:\n%s", tm.View())
+	}
+}
+
+func TestPlayerStartupFailureIsShown(t *testing.T) {
+	m := New(mock.New(), WithPlayer(func(context.Context) error { return errors.New("player did not appear") }))
+	var tm tea.Model = m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
+	tm = settle(tm, m.Init())
+	if !strings.Contains(tm.View(), "player: player did not appear") {
+		t.Errorf("failure should be visible:\n%s", tm.View())
+	}
+}
+
+func TestNoPlayerOptionLeavesFooterAlone(t *testing.T) {
+	tm := boot(110, 32)
+	if strings.Contains(tm.View(), "player") {
+		t.Error("no player was configured, so nothing about it should show")
+	}
+}
+
+func TestProgressBarIsExactWidthAndMovesInsideACell(t *testing.T) {
+	// Tests have no terminal, so colour is off; the sub-cell fade is colour.
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(old)
+
+	total := 4 * time.Minute
+	prevFilled := -1
+	for e := time.Duration(0); e <= total; e += 3 * time.Second {
+		bar := progressBar(e, total, 60)
+		if w := ansi.StringWidth(bar); w != 60 {
+			t.Fatalf("elapsed %v: bar is %d wide, want 60", e, w)
+		}
+		filled := strings.Count(ansi.Strip(bar), "━")
+		if filled < prevFilled {
+			t.Fatalf("elapsed %v: bar went backwards (%d -> %d)", e, prevFilled, filled)
+		}
+		prevFilled = filled
+	}
+
+	// Half a second later the cell the playhead is in has a different colour,
+	// so the bar visibly advances well before it reaches the next cell.
+	a, b := progressBar(100*time.Second, total, 60), progressBar(100500*time.Millisecond, total, 60)
+	if a == b {
+		t.Error("the bar should move sub-cell, not only when a whole cell fills")
+	}
+}
+
+func TestPlaybackClockIsSmooth(t *testing.T) {
+	tm := boot(110, 32)
+	tm = press(tm, "tab", "enter") // start playing
+	t0 := time.Unix(1_000_000, 0)
+	tick := func(i int) { tm, _ = tm.Update(tickMsg(t0.Add(time.Duration(i) * 50 * time.Millisecond))) }
+
+	for i := 0; i < 20; i++ {
+		tick(i)
+	}
+	m := tm.(Model)
+	base := m.elapsed
+
+	// A poll that lands 1s behind (typical request latency) must not snap the clock back.
+	behind := *m.state
+	behind.Progress = base - time.Second
+	tm, _ = tm.Update(stateMsg{state: &behind})
+	if got := tm.(Model).elapsed; got != base {
+		t.Fatalf("poll moved the clock from %v to %v; it should be absorbed gradually", base, got)
+	}
+
+	// Over the next ticks the clock keeps moving forward and converges.
+	prev := base
+	for i := 20; i < 120; i++ {
+		tick(i)
+		got := tm.(Model).elapsed
+		if got < prev {
+			t.Fatalf("tick %d: clock went backwards (%v -> %v)", i, prev, got)
+		}
+		prev = got
+	}
+	want := base - time.Second + 100*50*time.Millisecond // Spotify's position plus the time that passed
+	if d := prev - want; d < -60*time.Millisecond || d > 60*time.Millisecond {
+		t.Errorf("clock ended at %v, want about %v", prev, want)
+	}
+
+	// A big disagreement (a seek elsewhere) snaps immediately.
+	far := *tm.(Model).state
+	far.Progress = prev + 30*time.Second
+	tm, _ = tm.Update(stateMsg{state: &far})
+	if got := tm.(Model).elapsed; got != far.Progress {
+		t.Errorf("a 30s jump should snap, got %v want %v", got, far.Progress)
+	}
+}
+
+func TestLateFramesDoNotLoseTime(t *testing.T) {
+	tm := boot(110, 32)
+	tm = press(tm, "tab", "enter")
+	t0 := time.Unix(1_000_000, 0)
+	tm, _ = tm.Update(tickMsg(t0))
+	start := tm.(Model).elapsed
+	// Three frames that each ran 120ms late: a fixed 50ms/tick would lose 210ms.
+	for i := 1; i <= 3; i++ {
+		tm, _ = tm.Update(tickMsg(t0.Add(time.Duration(i) * 120 * time.Millisecond)))
+	}
+	if got := tm.(Model).elapsed - start; got != 360*time.Millisecond {
+		t.Errorf("advanced %v over 360ms of real time", got)
 	}
 }

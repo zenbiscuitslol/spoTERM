@@ -58,8 +58,11 @@ func playlistRow(p spotify.Playlist, cursor, focused bool, w int) string {
 	if p.Locked {
 		label, nameStyle = "⊘ "+p.Name, styleMuted
 	}
+	// The count is anchored to its column so a name the terminal measures
+	// differently than we do can't push it (or the border) out of line.
+	countAt := at(1 + w - ansi.StringWidth(count))
 	if !cursor {
-		return spread(nameStyle.Render(label), styleMuted.Render(count), w)
+		return spreadAt(nameStyle.Render(label), styleMuted.Render(count), w, 1+w-ansi.StringWidth(count))
 	}
 
 	// Cursor row: highlight bar spanning the full width, including the gap.
@@ -80,5 +83,5 @@ func playlistRow(p spotify.Playlist, cursor, focused bool, w int) string {
 	name := ansi.Truncate(prefix+p.Name, w-ansi.StringWidth(count)-1, "…")
 	name = bg.Foreground(fg).Bold(true).Render(name)
 	gap := max(w-ansi.StringWidth(name)-ansi.StringWidth(cnt), 0)
-	return name + bg.Render(strings.Repeat(" ", gap)) + cnt
+	return name + bg.Render(strings.Repeat(" ", gap)) + countAt + cnt
 }
