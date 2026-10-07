@@ -83,6 +83,7 @@ func TestKittyCoverShape(t *testing.T) {
 }
 
 func TestKittyViewFitsTerminal(t *testing.T) {
+	withColor(t)
 	m := New(mock.New())
 	m.cover.mode = coverKitty
 	var tm = tmModel(m)

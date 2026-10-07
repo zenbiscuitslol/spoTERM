@@ -87,6 +87,7 @@ func TestInitialLoadShowsPlaylistsAndTracks(t *testing.T) {
 
 // Every rendered frame must fit the terminal, otherwise it scrolls or tears.
 func TestViewFitsTerminal(t *testing.T) {
+	withColor(t)
 	for _, sz := range [][2]int{{60, 19}, {80, 24}, {120, 40}, {200, 50}} {
 		tm := boot(sz[0], sz[1])
 		tm = press(tm, "tab", "enter", "down", "down") // start playing

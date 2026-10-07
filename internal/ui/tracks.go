@@ -53,12 +53,17 @@ func (m Model) tracksView(w, h int) string {
 	albumX := artistX + artistW + 1
 	timeX := albumX + albumW + 1
 
+	// Each cell is styled on its own and the anchors are added afterwards:
+	// lipgloss styles some attributes (underline) character by character, which
+	// would cut an escape sequence inside the styled text into visible junk.
+	// The gutter spaces stay so the row's visible width is the full width; the
+	// anchors only correct where each cell starts.
 	row := func(num, title, artist, album, dur string, st lipgloss.Style) string {
-		// The gutter spaces stay in the string so its visible width is the
-		// full row; the anchors only correct where each cell starts.
-		return st.Render(fit(num, numW) + " " + at(titleX) + fit(title, titleW) + " " + at(artistX) +
-			fit(artist, artistW) + " " + at(albumX) + fit(album, albumW) + " " + at(timeX) +
-			fmt.Sprintf("%*s", timeW, dur))
+		cell := func(s string, w int) string { return st.Render(fit(s, w)) }
+		gap := st.Render(" ")
+		return cell(num, numW) + gap + at(titleX) + cell(title, titleW) + gap + at(artistX) +
+			cell(artist, artistW) + gap + at(albumX) + cell(album, albumW) + gap + at(timeX) +
+			st.Render(fmt.Sprintf("%*s", timeW, dur))
 	}
 
 	lines := []string{row("#", "Title", "Artist", "Album", "Time", styleMuted.Underline(true))}

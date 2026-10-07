@@ -2,13 +2,16 @@ package ui
 
 import (
 	"context"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"github.com/zenbiscuitslol/spotiCLI/internal/mock"
 	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
 )
@@ -64,7 +67,17 @@ func (b tamilBackend) Playlists(ctx context.Context) ([]spotify.Playlist, error)
 	return pl, err
 }
 
+// withColor turns colour output on for a test. Without it lipgloss emits no
+// styling at all, which hides bugs in how styles and escapes interact.
+func withColor(t *testing.T) {
+	t.Helper()
+	old := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
+}
+
 func TestWideNamesCannotShiftTheRestOfTheRow(t *testing.T) {
+	withColor(t)
 	// Sanity: the terminal model and ansi.StringWidth really disagree on this
 	// name, otherwise the test proves nothing.
 	name := "★ தமிழ் ★ மி"
@@ -140,6 +153,33 @@ func TestSpreadAtMatchesSpreadVisibly(t *testing.T) {
 		a, b := spread("hello world", "42 ", w), spreadAt("hello world", "42 ", w, 100)
 		if ansi.Strip(a) != ansi.Strip(b) {
 			t.Errorf("w=%d: %q vs %q", w, a, b)
+		}
+	}
+}
+
+// Escape sequences must reach the terminal intact. If a style splits one, the
+// pieces show up as text ("[41G"), widening the row until it wraps and scrolls
+// the screen.
+var escFragment = regexp.MustCompile(`\[[0-9;]*[A-Za-z]`)
+
+func TestNoEscapeFragmentsLeakIntoText(t *testing.T) {
+	withColor(t)
+	for _, sz := range [][2]int{{60, 19}, {80, 24}, {120, 36}, {170, 45}} {
+		for _, keys := range [][]string{{}, {"j", "j"}, {"tab", "j"}, {"2"}, {"tab", "enter"}} {
+			tm := boot(sz[0], sz[1])
+			tm = press(tm, keys...)
+			for i := 0; i < 3; i++ {
+				tm, _ = tm.Update(tickMsg{})
+			}
+			for i, line := range strings.Split(tm.View(), "\n") {
+				plain := ansi.Strip(line)
+				if f := escFragment.FindString(plain); f != "" {
+					t.Errorf("%dx%d keys=%v row %d: escape fragment %q leaked into the text: %.60q", sz[0], sz[1], keys, i, f, plain)
+				}
+				if w := ansi.StringWidth(line); w > sz[0] {
+					t.Errorf("%dx%d keys=%v row %d: %d cells wide, would wrap", sz[0], sz[1], keys, i, w)
+				}
+			}
 		}
 	}
 }
