@@ -56,6 +56,26 @@ func (s *searchState) count(sec int) int {
 	return len(s.res.Artists)
 }
 
+// step moves the cursor one result, flowing into the next or previous
+// non-empty section at the edges so down/up reach every result.
+func (s *searchState) step(d int) {
+	if i := s.cur[s.sec] + d; i >= 0 && i < s.count(s.sec) {
+		s.cur[s.sec] = i
+		return
+	}
+	for n := 1; n < numSecs; n++ {
+		sec := ((s.sec+d*n)%numSecs + numSecs) % numSecs
+		if (d > 0 && sec < s.sec) || (d < 0 && sec > s.sec) {
+			break // don't wrap around
+		}
+		if c := s.count(sec); c > 0 {
+			s.sec = sec
+			s.cur[sec] = map[bool]int{true: 0, false: c - 1}[d > 0]
+			return
+		}
+	}
+}
+
 // rows is how many result rows each section gets for a body of h lines.
 func searchRows(h int) int { return max((h-numSecs)/numSecs, 1) }
 
@@ -90,14 +110,14 @@ func (m Model) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "ctrl+s":
 		s.open = false
-	case "tab":
+	case "tab", "right":
 		s.sec = (s.sec + 1) % numSecs
-	case "shift+tab":
+	case "shift+tab", "left":
 		s.sec = (s.sec + numSecs - 1) % numSecs
 	case "up":
-		s.cur[s.sec] = clamp(s.cur[s.sec]-1, 0, max(s.count(s.sec)-1, 0))
+		s.step(-1)
 	case "down":
-		s.cur[s.sec] = clamp(s.cur[s.sec]+1, 0, max(s.count(s.sec)-1, 0))
+		s.step(1)
 	case "enter":
 		if strings.TrimSpace(s.input) != s.searched || s.count(s.sec) == 0 {
 			s.seq++ // supersede the pending debounce
@@ -275,5 +295,5 @@ func (m Model) searchDetails(w int) []string {
 }
 
 func (m Model) searchFooter() string {
-	return styleMuted.Render(fit(" type to search · tab section · ↑↓ move · enter play/open · esc close", m.w))
+	return styleMuted.Render(fit(" type to search · ↑↓/tab section · enter play/open · esc close", m.w))
 }

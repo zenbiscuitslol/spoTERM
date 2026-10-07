@@ -1,6 +1,7 @@
 package ui
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
 	"strings"
 	"testing"
 
@@ -104,4 +105,25 @@ func TestSearchViewFitsTerminal(t *testing.T) {
 		}
 	}
 	setTheme(0)
+}
+
+func TestSearchArrowsFlowIntoAlbumsAndArtists(t *testing.T) {
+	// "marlowe": 2 songs, 1 album, 1 artist.
+	tm := press(boot(110, 32), "ctrl+s", "m", "a", "r", "l", "o", "w", "e")
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyDown})
+	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if m := tm.(Model); m.srch.sec != secAlbums || m.srch.cur[secAlbums] != 0 {
+		t.Fatalf("sec=%d cur=%v", m.srch.sec, m.srch.cur)
+	}
+	tm = press(tm, "enter")
+	if m := tm.(Model); m.srch.open || m.opened.Name != "Run Slow" || !m.opened.Album {
+		t.Fatalf("album not opened: %+v", m.opened)
+	}
+	tm = press(tm, "ctrl+s")
+	for i := 0; i < 3; i++ {
+		tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyUp})
+	}
+	if m := tm.(Model); m.srch.sec != secTracks || m.srch.cur[secTracks] != 0 {
+		t.Fatalf("up: sec=%d cur=%v", m.srch.sec, m.srch.cur)
+	}
 }

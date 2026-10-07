@@ -32,7 +32,30 @@ from any other Spotify device you have open if you run with `--no-player`.
 | `ctrl+s` | search songs, albums and artists |
 | `q` | quit |
 
-In search: type to search, `tab` / `shift+tab` switch section (songs, albums, artists), `↑`/`↓` move, `enter` plays a song or opens an album / an artist's top tracks, `esc` closes.
+## Search
+
+Press `ctrl+s` to open a full-screen search. Results are grouped into **Songs**,
+**Albums** and **Artists**, with details for the highlighted result on the right.
+
+| key | action |
+| --- | --- |
+| *type* | search (results appear once you pause typing) |
+| `tab` / `shift+tab`, `←` / `→` | switch between Songs, Albums and Artists |
+| `↑` / `↓` | move; carries on into the next section at the end of a list |
+| `enter` | play a song, open an album, or open an artist's top tracks |
+| `ctrl+u` | clear the search box |
+| `esc` or `ctrl+s` | close search (your query is kept) |
+
+Opening an album or artist closes the search and shows its tracks in the main
+view; press `enter` there to play one.
+
+## Themes
+
+Press `t` to cycle through the color themes; your choice is saved
+(`~/.config/spotiCLI/theme`) and restored on the next launch.
+
+Spotify (default), Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, Solarized,
+Rosé Pine, Synthwave, Cyberpunk, Mono. All are designed for dark terminals.
 
 ## Album art
 
