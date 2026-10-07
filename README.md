@@ -18,6 +18,9 @@ from any other Spotify device you have open if you run with `--no-player`.
 `go run . --demo` runs the UI on sample data; `go run . --logout` forgets the login;
 `go run . --no-player` skips the built-in player.
 
+`./install.sh` builds spotiCLI into `~/.local/bin`, so afterwards you can just type `spotiCLI`;
+`spotiCLI --update` pulls the latest changes and rebuilds it (only when there are new commits).
+
 ## Keys
 
 | key | action |
