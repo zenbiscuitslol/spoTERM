@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,6 +77,15 @@ func (b *Backend) Tracks(_ context.Context, pl spotify.Playlist) ([]spotify.Trac
 	if pl.ID == "mock:15" {
 		return nil, spotify.ErrPlaylistForbidden
 	}
+	if pl.IsArtist {
+		var out []spotify.Track
+		for _, t := range Tracks() {
+			if t.Artist == pl.Name {
+				out = append(out, t)
+			}
+		}
+		return out, nil
+	}
 	if !pl.Album {
 		return Tracks(), nil
 	}
@@ -83,6 +93,40 @@ func (b *Backend) Tracks(_ context.Context, pl spotify.Playlist) ([]spotify.Trac
 	for _, t := range Tracks() {
 		if t.Album == pl.Name {
 			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// Search matches the sample library by case-insensitive substring.
+func (b *Backend) Search(ctx context.Context, query string) (spotify.SearchResults, error) {
+	q := strings.ToLower(query)
+	has := func(ss ...string) bool {
+		for _, s := range ss {
+			if strings.Contains(strings.ToLower(s), q) {
+				return true
+			}
+		}
+		return false
+	}
+	var out spotify.SearchResults
+	seen := map[string]bool{}
+	for _, t := range Tracks() {
+		if has(t.Title, t.Artist, t.Album) {
+			out.Tracks = append(out.Tracks, t)
+		}
+		if has(t.Artist) && !seen[t.Artist] {
+			seen[t.Artist] = true
+			out.Artists = append(out.Artists, spotify.Playlist{
+				ID: "mock:artist:" + t.Artist, URI: "mock:artist:" + t.Artist, Name: t.Artist,
+				IsArtist: true, Info: "12,345 followers · sample pop", ImageURL: coverURL,
+			})
+		}
+	}
+	albums, _ := b.Albums(ctx)
+	for _, a := range albums {
+		if has(a.Name, a.Artist) {
+			out.Albums = append(out.Albums, a)
 		}
 	}
 	return out, nil

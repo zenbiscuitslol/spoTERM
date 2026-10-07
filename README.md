@@ -28,7 +28,11 @@ from any other Spotify device you have open if you run with `--no-player`.
 | `enter` | open playlist or album / play track |
 | `space` | play / pause |
 | `n` / `p` | next / previous |
+| `t` | cycle color theme |
+| `ctrl+s` | search songs, albums and artists |
 | `q` | quit |
+
+In search: type to search, `tab` / `shift+tab` switch section (songs, albums, artists), `↑`/`↓` move, `enter` plays a song or opens an album / an artist's top tracks, `esc` closes.
 
 ## Album art
 

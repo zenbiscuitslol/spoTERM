@@ -404,3 +404,51 @@ func TestWaitForDevice(t *testing.T) {
 		t.Errorf("want a clear timeout error, got %v", err)
 	}
 }
+
+const searchJSON = `{
+ "tracks":{"items":[{"uri":"spotify:track:1","name":"Song","type":"track","duration_ms":61000,
+   "artists":[{"name":"Ann"}],"album":{"name":"LP","images":[]}}, null]},
+ "albums":{"items":[{"id":"al1","name":"LP","uri":"spotify:album:al1","release_date":"2020-05-01","total_tracks":9,
+   "artists":[{"name":"Ann"}],"images":[]}]},
+ "artists":{"items":[{"id":"ar1","name":"Ann","uri":"spotify:artist:ar1","genres":["pop","folk"],"followers":{"total":42}}]}}`
+
+func TestSearchDecodes(t *testing.T) {
+	c, log := fake(t, map[string]func(http.ResponseWriter, *http.Request){"GET /search": js(searchJSON)})
+	r, err := c.Search(context.Background(), "ann")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := (*log)[0].Query; !strings.Contains(q, "q=ann") || !strings.Contains(q, "type=track%2Calbum%2Cartist") {
+		t.Errorf("query = %s", q)
+	}
+	if len(r.Tracks) != 1 || r.Tracks[0].Title != "Song" || r.Tracks[0].Duration != 61*time.Second {
+		t.Errorf("tracks = %+v", r.Tracks)
+	}
+	if len(r.Albums) != 1 || !r.Albums[0].Album || r.Albums[0].Year != "2020" || r.Albums[0].Tracks != 9 {
+		t.Errorf("albums = %+v", r.Albums)
+	}
+	if len(r.Artists) != 1 || !r.Artists[0].IsArtist || r.Artists[0].Info != "42 followers · pop, folk" {
+		t.Errorf("artists = %+v", r.Artists)
+	}
+}
+
+func TestArtistTracksUseTopTracksThenFallBackToSearch(t *testing.T) {
+	ar := Playlist{ID: "ar1", Name: "Ann", IsArtist: true}
+	c, _ := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /artists/ar1/top-tracks": js(`{"tracks":[{"uri":"spotify:track:9","name":"Hit","type":"track","artists":[{"name":"Ann"}]}]}`),
+	})
+	if tr, err := c.Tracks(context.Background(), ar); err != nil || len(tr) != 1 || tr[0].Title != "Hit" {
+		t.Fatalf("top tracks: %v %v", tr, err)
+	}
+
+	c, log := fake(t, map[string]func(http.ResponseWriter, *http.Request){
+		"GET /artists/ar1/top-tracks": apiErr(403, ""),
+		"GET /search":                 js(searchJSON),
+	})
+	if tr, err := c.Tracks(context.Background(), ar); err != nil || len(tr) != 1 {
+		t.Fatalf("fallback: %v %v", tr, err)
+	}
+	if q := (*log)[1].Query; !strings.Contains(q, "artist%3A%22Ann%22") {
+		t.Errorf("fallback query = %s", q)
+	}
+}

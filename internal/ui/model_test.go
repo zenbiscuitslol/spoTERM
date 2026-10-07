@@ -41,6 +41,12 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
+	case "ctrl+s":
+		return tea.KeyMsg{Type: tea.KeyCtrlS}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
 	case "down":
 		return tea.KeyMsg{Type: tea.KeyDown}
 	case " ":
@@ -360,5 +366,24 @@ func TestLateFramesDoNotLoseTime(t *testing.T) {
 	}
 	if got := tm.(Model).elapsed - start; got != 360*time.Millisecond {
 		t.Errorf("advanced %v over 360ms of real time", got)
+	}
+}
+
+func TestThemeKeyCycles(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Cleanup(func() { setTheme(0) })
+	setTheme(0)
+	m := New(mock.New())
+	m.w, m.h = 100, 30
+	for i := 1; i <= len(themes); i++ {
+		m2, _ := m.onKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+		m = m2.(Model)
+		if themeIdx != i%len(themes) {
+			t.Fatalf("press %d: themeIdx=%d", i, themeIdx)
+		}
+	}
+	LoadTheme() // last save was theme 0 again
+	if themeIdx != 0 {
+		t.Fatalf("LoadTheme: %d", themeIdx)
 	}
 }

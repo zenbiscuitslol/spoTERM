@@ -78,7 +78,7 @@ func (m Model) tracksView(w, h int) string {
 			}
 		}
 		if focused && i == m.trCursor {
-			st = st.Background(colSelBg)
+			st = st.Background(colSelBg).Foreground(colHi).Bold(true)
 		}
 		lines = append(lines, row(num, t.Title, t.Artist, t.Album, fmtDur(t.Duration), st))
 	}

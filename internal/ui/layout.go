@@ -15,6 +15,7 @@ var (
 	colMuted  = lipgloss.Color("#7A7A7A")
 	colBorder = lipgloss.Color("#3A3A3A")
 	colSelBg  = lipgloss.Color("#262626")
+	colHi     = lipgloss.Color("#1DB954") // selected-row text
 
 	// Visualizer gradient: low -> mid -> high amplitude.
 	colVizLow  = "#1DB954"

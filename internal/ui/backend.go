@@ -23,6 +23,8 @@ type Backend interface {
 	Pause(ctx context.Context) error
 	Next(ctx context.Context) error
 	Previous(ctx context.Context) error
+	// Search finds tracks, albums and artists matching query.
+	Search(ctx context.Context, query string) (spotify.SearchResults, error)
 	Image(ctx context.Context, url string) (image.Image, error)
 }
 

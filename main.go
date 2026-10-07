@@ -81,6 +81,7 @@ func main() {
 		}
 	}
 
+	ui.LoadTheme()
 	p := tea.NewProgram(ui.New(be, opts...), tea.WithAltScreen())
 	_, err := p.Run()
 	if mgr != nil {

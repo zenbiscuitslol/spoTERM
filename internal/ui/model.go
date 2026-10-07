@@ -4,6 +4,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"time"
 
@@ -116,6 +117,8 @@ type Model struct {
 	polling  bool
 	status   string
 	statusAt int
+
+	srch searchState
 
 	viz   *visualizer
 	cover *coverRenderer
@@ -297,6 +300,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.tracks = msg.tracks
+		if m.opened.IsArtist {
+			m.opened.Tracks = len(msg.tracks) // artist listings don't say
+		}
 
 	case stateMsg:
 		m.polling = false
@@ -330,6 +336,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setStatus("Player ready")
 		}
+
+	case searchDebounceMsg:
+		if m.srch.open && msg.seq == m.srch.seq {
+			return m.startSearch()
+		}
+
+	case searchMsg:
+		return m.onSearchResult(msg)
 
 	case coverMsg:
 		if msg.err != nil {
@@ -384,7 +398,12 @@ func (m Model) pollDue() bool {
 }
 
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.srch.open {
+		return m.onSearchKey(msg)
+	}
 	switch msg.String() {
+	case "ctrl+s":
+		m.srch.open = true
 	case "q", "ctrl+c":
 		return m, tea.Quit
 
@@ -415,6 +434,8 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.playSelected()
 
+	case "t":
+		m.setStatus(fmt.Sprintf("Theme: %s (%d/%d)", nextTheme(), themeIdx+1, len(themes)))
 	case " ":
 		return m.togglePause()
 	case "n":
@@ -476,7 +497,12 @@ func (m Model) openAt(i int, focusTracks bool) (tea.Model, tea.Cmd) {
 	if i < 0 || i >= len(items) {
 		return m, nil
 	}
-	m.opened, m.hasOpen = items[i], true
+	return m.openPlaylist(items[i], focusTracks)
+}
+
+// openPlaylist shows pl in the track table, loading its tracks.
+func (m Model) openPlaylist(pl spotify.Playlist, focusTracks bool) (tea.Model, tea.Cmd) {
+	m.opened, m.hasOpen = pl, true
 	m.tracks, m.trErr, m.trLoading = nil, "", true
 	m.trCursor, m.trOffset = 0, 0
 	if focusTracks {
@@ -533,6 +559,9 @@ func (m Model) View() string {
 			styleMuted.Render("Terminal too small — need at least 60x19"))
 	}
 
+	if m.srch.open {
+		return m.searchView()
+	}
 	d := m.dims()
 	main := lipgloss.JoinVertical(lipgloss.Left,
 		m.tracksView(d.mainW, d.tracksH),
@@ -547,5 +576,5 @@ func (m Model) footer() string {
 		return " " + styleErr.Render(fit(m.status, m.w-2))
 	}
 	return styleMuted.Render(fit(
-		" ↑↓ move · tab pane · 1/2 list · enter open/play · space pause · n/p skip · q quit", m.w))
+		" ↑↓ move · tab pane · 1/2 list · enter open/play · space pause · n/p skip · t theme · ^s search · q quit", m.w))
 }

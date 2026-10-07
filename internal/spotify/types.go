@@ -26,6 +26,19 @@ type Playlist struct {
 	Artist   string
 	Year     string
 	ImageURL string // album art, applied to tracks because album listings omit it
+
+	// Set for artist search results, which share the playlist flow: opening
+	// one lists the artist's top tracks.
+	IsArtist bool
+	Info     string // details line, e.g. followers and genres
+}
+
+// SearchResults holds the matches of one search. Albums and artists are
+// playlist-shaped so they open and play like saved albums.
+type SearchResults struct {
+	Tracks  []Track
+	Albums  []Playlist
+	Artists []Playlist
 }
 
 type Track struct {

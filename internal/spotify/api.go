@@ -242,19 +242,33 @@ func (c *Client) Playlists(ctx context.Context) ([]Playlist, error) {
 }
 
 // Albums returns the user's saved albums as playlist-shaped entries.
+type apiAlbum struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	URI         string `json:"uri"`
+	ReleaseDate string `json:"release_date"`
+	TotalTracks int    `json:"total_tracks"`
+	Artists     []struct {
+		Name string `json:"name"`
+	} `json:"artists"`
+	Images []apiImage `json:"images"`
+}
+
+func (a apiAlbum) toPlaylist() Playlist {
+	names := make([]string, len(a.Artists))
+	for i, ar := range a.Artists {
+		names[i] = ar.Name
+	}
+	return Playlist{
+		ID: a.ID, Name: a.Name, URI: a.URI, Tracks: a.TotalTracks,
+		Album: true, Artist: strings.Join(names, ", "),
+		Year: strings.SplitN(a.ReleaseDate, "-", 2)[0], ImageURL: pickImage(a.Images),
+	}
+}
+
 func (c *Client) Albums(ctx context.Context) ([]Playlist, error) {
 	raw, err := fetchAll[struct {
-		Album struct {
-			ID          string `json:"id"`
-			Name        string `json:"name"`
-			URI         string `json:"uri"`
-			ReleaseDate string `json:"release_date"`
-			TotalTracks int    `json:"total_tracks"`
-			Artists     []struct {
-				Name string `json:"name"`
-			} `json:"artists"`
-			Images []apiImage `json:"images"`
-		} `json:"album"`
+		Album apiAlbum `json:"album"`
 	}](ctx, c, "/me/albums", url.Values{"limit": {"50"}}, maxPlaylists)
 	if err != nil {
 		return nil, err
@@ -262,19 +276,9 @@ func (c *Client) Albums(ctx context.Context) ([]Playlist, error) {
 
 	out := make([]Playlist, 0, len(raw))
 	for _, it := range raw {
-		a := it.Album
-		if a.ID == "" {
-			continue
+		if it.Album.ID != "" {
+			out = append(out, it.Album.toPlaylist())
 		}
-		names := make([]string, len(a.Artists))
-		for i, ar := range a.Artists {
-			names[i] = ar.Name
-		}
-		out = append(out, Playlist{
-			ID: a.ID, Name: a.Name, URI: a.URI, Tracks: a.TotalTracks,
-			Album: true, Artist: strings.Join(names, ", "),
-			Year: strings.SplitN(a.ReleaseDate, "-", 2)[0], ImageURL: pickImage(a.Images),
-		})
 	}
 	return out, nil
 }
@@ -302,6 +306,9 @@ func (c *Client) Tracks(ctx context.Context, pl Playlist) ([]Track, error) {
 	var tracks []Track
 	if pl.Album {
 		return c.albumTracks(ctx, pl)
+	}
+	if pl.IsArtist {
+		return c.artistTracks(ctx, pl)
 	}
 	if pl.Liked {
 		raw, err := fetchAll[struct {
@@ -334,6 +341,93 @@ func (c *Client) Tracks(ctx context.Context, pl Playlist) ([]Track, error) {
 		if t == nil {
 			t = it.Track
 		}
+		if tr, ok := t.toTrack(); ok {
+			tracks = append(tracks, tr)
+		}
+	}
+	return tracks, nil
+}
+
+// --- Search ----------------------------------------------------------------
+
+// searchLimit is per type; Spotify lowered the maximum in 2026, 10 is safe.
+const searchLimit = 10
+
+// Search finds tracks, albums and artists matching query.
+func (c *Client) Search(ctx context.Context, query string) (SearchResults, error) {
+	var r struct {
+		Tracks struct {
+			Items []*apiTrack `json:"items"`
+		} `json:"tracks"`
+		Albums struct {
+			Items []*apiAlbum `json:"items"`
+		} `json:"albums"`
+		Artists struct {
+			Items []*struct {
+				ID        string     `json:"id"`
+				Name      string     `json:"name"`
+				URI       string     `json:"uri"`
+				Genres    []string   `json:"genres"`
+				Images    []apiImage `json:"images"`
+				Followers struct {
+					Total int `json:"total"`
+				} `json:"followers"`
+			} `json:"items"`
+		} `json:"artists"`
+	}
+	q := url.Values{"q": {query}, "type": {"track,album,artist"}, "limit": {strconv.Itoa(searchLimit)}}
+	if _, err := c.do(ctx, http.MethodGet, "/search", q, nil, &r); err != nil {
+		return SearchResults{}, err
+	}
+
+	var out SearchResults
+	for _, t := range r.Tracks.Items {
+		if tr, ok := t.toTrack(); ok {
+			out.Tracks = append(out.Tracks, tr)
+		}
+	}
+	for _, a := range r.Albums.Items {
+		if a != nil && a.ID != "" {
+			out.Albums = append(out.Albums, a.toPlaylist())
+		}
+	}
+	for _, a := range r.Artists.Items {
+		if a == nil || a.ID == "" {
+			continue
+		}
+		info := fmt.Sprintf("%d followers", a.Followers.Total)
+		if len(a.Genres) > 0 {
+			info += " · " + strings.Join(a.Genres[:min(len(a.Genres), 3)], ", ")
+		}
+		out.Artists = append(out.Artists, Playlist{
+			ID: a.ID, Name: a.Name, URI: a.URI, IsArtist: true, Info: info, ImageURL: pickImage(a.Images),
+		})
+	}
+	return out, nil
+}
+
+// artistTracks returns an artist's top tracks. If that endpoint is gone or
+// refuses (Spotify has been trimming the API), it falls back to a track
+// search restricted to the artist.
+func (c *Client) artistTracks(ctx context.Context, pl Playlist) ([]Track, error) {
+	var r struct {
+		Tracks []*apiTrack `json:"tracks"`
+	}
+	_, err := c.do(ctx, http.MethodGet, "/artists/"+url.PathEscape(pl.ID)+"/top-tracks",
+		url.Values{"market": {"from_token"}}, nil, &r)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status != http.StatusTooManyRequests {
+		res, serr := c.Search(ctx, `artist:"`+pl.Name+`"`)
+		if serr != nil {
+			return nil, serr
+		}
+		return res.Tracks, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var tracks []Track
+	for _, t := range r.Tracks {
 		if tr, ok := t.toTrack(); ok {
 			tracks = append(tracks, tr)
 		}
@@ -383,7 +477,7 @@ func (c *Client) Play(ctx context.Context, pl Playlist, tracks []Track, idx int)
 		return errors.New("no track selected")
 	}
 	body := map[string]any{}
-	if pl.Liked || pl.URI == "" {
+	if pl.Liked || pl.IsArtist || pl.URI == "" {
 		var uris []string
 		for _, t := range tracks[idx:min(idx+100, len(tracks))] {
 			uris = append(uris, t.URI)

@@ -67,7 +67,7 @@ func playlistRow(p spotify.Playlist, cursor, focused bool, w int) string {
 
 	// Cursor row: highlight bar spanning the full width, including the gap.
 	// Dimmer when the sidebar doesn't have focus.
-	fg := colGreen
+	fg := colHi
 	if !focused {
 		fg = colText
 	}
