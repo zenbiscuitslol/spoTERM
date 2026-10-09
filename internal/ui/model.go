@@ -1,4 +1,4 @@
-// Package ui contains the Bubble Tea model and all rendering for spotiCLI.
+// Package ui contains the Bubble Tea model and all rendering for spoTERM.
 package ui
 
 import (
@@ -10,7 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
+	"github.com/zenbiscuitslol/spoTERM/internal/spotify"
 )
 
 const (
@@ -123,7 +123,7 @@ type Model struct {
 	viz   *visualizer
 	cover *coverRenderer
 
-	// startPlayer brings up the built-in audio player; nil when spotiCLI only
+	// startPlayer brings up the built-in audio player; nil when spoTERM only
 	// controls other devices.
 	startPlayer func(ctx context.Context) error
 }
@@ -438,6 +438,10 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("Theme: %s (%d/%d)", nextTheme(), themeIdx+1, len(themes)))
 	case " ":
 		return m.togglePause()
+	case "+", "=":
+		return m.volume(5)
+	case "-", "_":
+		return m.volume(-5)
 	case "n":
 		return m.skip(func(ctx context.Context, be Backend) error { return be.Next(ctx) })
 	case "p":
@@ -540,6 +544,17 @@ func (m Model) togglePause() (tea.Model, tea.Cmd) {
 	})
 }
 
+func (m Model) volume(delta int) (tea.Model, tea.Cmd) {
+	if m.state == nil {
+		m.setStatus("Nothing playing — pick a track and press enter")
+		return m, nil
+	}
+	s := *m.state
+	s.Volume = min(max(s.Volume+delta, 0), 100)
+	m.state = &s
+	return m, m.act(func(ctx context.Context, be Backend) error { return be.SetVolume(ctx, s.Volume) })
+}
+
 func (m Model) skip(f func(context.Context, Backend) error) (tea.Model, tea.Cmd) {
 	if m.state == nil {
 		m.setStatus("Nothing playing — pick a track and press enter")
@@ -576,5 +591,5 @@ func (m Model) footer() string {
 		return " " + styleErr.Render(fit(m.status, m.w-2))
 	}
 	return styleMuted.Render(fit(
-		" ↑↓ move · tab pane · 1/2 list · enter open/play · space pause · n/p skip · t theme · ^s search · q quit", m.w))
+		" ↑↓ move · tab pane · 1/2 list · enter open/play · space pause · n/p skip · +/- volume · t theme · ^s search · q quit", m.w))
 }

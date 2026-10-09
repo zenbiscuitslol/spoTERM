@@ -1,4 +1,4 @@
-module github.com/zenbiscuitslol/spotiCLI
+module github.com/zenbiscuitslol/spoTERM
 
 go 1.26.0
 

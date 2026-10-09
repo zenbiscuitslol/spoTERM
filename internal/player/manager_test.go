@@ -28,7 +28,7 @@ func newTestManager(t *testing.T, bin string) *Manager {
 	t.Helper()
 	d := t.TempDir()
 	return &Manager{
-		DeviceName: "spotiCLI",
+		DeviceName: "spoTERM",
 		Bin:        bin,
 		ConfigDir:  filepath.Join(d, "cfg"),
 		LogPath:    filepath.Join(d, "state", "librespot.log"),
@@ -63,7 +63,7 @@ func TestStartWritesConfigLogsAndStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`device_name: "spotiCLI"`, "audio_backend: pulseaudio", "type: interactive", "enabled: false"} {
+	for _, want := range []string{`device_name: "spoTERM"`, "audio_backend: pulseaudio", "type: interactive", "enabled: false"} {
 		if !strings.Contains(string(cfg), want) {
 			t.Errorf("config.yml is missing %q:\n%s", want, cfg)
 		}
@@ -130,7 +130,7 @@ func TestFind(t *testing.T) {
 
 	bin := fakeBin(t)
 	got, err := Find(func(k string) string {
-		if k == "SPOTICLI_LIBRESPOT" {
+		if k == "SPOTERM_LIBRESPOT" {
 			return bin
 		}
 		return ""
@@ -140,6 +140,6 @@ func TestFind(t *testing.T) {
 	}
 
 	if _, err := Find(func(string) string { return "/no/such/file" }); err == nil || err == ErrNotInstalled {
-		t.Errorf("a wrong SPOTICLI_LIBRESPOT should be reported as such, got %v", err)
+		t.Errorf("a wrong SPOTERM_LIBRESPOT should be reported as such, got %v", err)
 	}
 }

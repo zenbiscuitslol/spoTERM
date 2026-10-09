@@ -1,6 +1,6 @@
 // Package player runs go-librespot, a GUI-less Spotify Connect player, as a
 // background child process. Spotify's Web API can only remote-control a
-// player; this is the player, so spotiCLI can make sound on its own.
+// player; this is the player, so spoTERM can make sound on its own.
 //
 // go-librespot is an unofficial client and needs Spotify Premium.
 package player
@@ -22,7 +22,7 @@ import (
 )
 
 // ErrNotInstalled means no go-librespot binary could be found.
-var ErrNotInstalled = errors.New("go-librespot not found: install it, point SPOTICLI_LIBRESPOT at it, or run with --no-player")
+var ErrNotInstalled = errors.New("go-librespot not found: install it, point SPOTERM_LIBRESPOT at it, or run with --no-player")
 
 const stopGrace = 3 * time.Second
 
@@ -30,7 +30,7 @@ const stopGrace = 3 * time.Second
 type Manager struct {
 	DeviceName string // how the player appears in Spotify's device list
 	Bin        string // go-librespot executable
-	ConfigDir  string // spotiCLI's own go-librespot config + credentials
+	ConfigDir  string // spoTERM's own go-librespot config + credentials
 	LogPath    string // where its output goes (the TUI owns the terminal)
 
 	// OnLoginURL is called once if go-librespot prints a Spotify login link
@@ -42,11 +42,11 @@ type Manager struct {
 	done chan struct{} // closed when the process has exited
 }
 
-// Find locates the go-librespot binary: $SPOTICLI_LIBRESPOT, else PATH.
+// Find locates the go-librespot binary: $SPOTERM_LIBRESPOT, else PATH.
 func Find(getenv func(string) string) (string, error) {
-	if p := getenv("SPOTICLI_LIBRESPOT"); p != "" {
+	if p := getenv("SPOTERM_LIBRESPOT"); p != "" {
 		if _, err := os.Stat(p); err != nil {
-			return "", fmt.Errorf("SPOTICLI_LIBRESPOT: %w", err)
+			return "", fmt.Errorf("SPOTERM_LIBRESPOT: %w", err)
 		}
 		return p, nil
 	}
@@ -57,7 +57,7 @@ func Find(getenv func(string) string) (string, error) {
 	return p, nil
 }
 
-// New returns a Manager using the default binary lookup and spotiCLI's
+// New returns a Manager using the default binary lookup and spoTERM's
 // config and state directories.
 func New(deviceName string) (*Manager, error) {
 	bin, err := Find(os.Getenv)
@@ -79,8 +79,8 @@ func New(deviceName string) (*Manager, error) {
 	return &Manager{
 		DeviceName: deviceName,
 		Bin:        bin,
-		ConfigDir:  filepath.Join(cfg, "spotiCLI", "librespot"),
-		LogPath:    filepath.Join(state, "spotiCLI", "librespot.log"),
+		ConfigDir:  filepath.Join(cfg, "spoTERM", "librespot"),
+		LogPath:    filepath.Join(state, "spoTERM", "librespot.log"),
 		OnLoginURL: openBrowser,
 	}, nil
 }

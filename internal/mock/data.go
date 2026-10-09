@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
+	"github.com/zenbiscuitslol/spoTERM/internal/spotify"
 )
 
 const coverURL = "mock://cover"
@@ -38,9 +38,10 @@ type Backend struct {
 	playing bool
 	base    time.Duration // progress at `since`
 	since   time.Time
+	vol     int
 }
 
-func New() *Backend { return &Backend{} }
+func New() *Backend { return &Backend{vol: 70} }
 
 func (b *Backend) Playlists(context.Context) ([]spotify.Playlist, error) {
 	out := make([]spotify.Playlist, len(playlistData))
@@ -147,7 +148,7 @@ func (b *Backend) Playback(context.Context) (*spotify.State, error) {
 	}
 	return &spotify.State{
 		Playing: b.playing, Track: b.queue[b.idx], Progress: b.progress(),
-		Volume: 70, Repeat: "off", DeviceName: "Demo device",
+		Volume: b.vol, Repeat: "off", DeviceName: "Demo device",
 	}, nil
 }
 
@@ -184,6 +185,13 @@ func (b *Backend) skip(delta int) error {
 		b.idx = (b.idx + delta + len(b.queue)) % len(b.queue)
 		b.base, b.since = 0, time.Now()
 	}
+	return nil
+}
+
+func (b *Backend) SetVolume(_ context.Context, pct int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.vol = pct
 	return nil
 }
 

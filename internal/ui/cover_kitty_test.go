@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
-	"github.com/zenbiscuitslol/spotiCLI/internal/mock"
+	"github.com/zenbiscuitslol/spoTERM/internal/mock"
 )
 
 func env(kv map[string]string) func(string) string {
@@ -27,8 +27,8 @@ func TestDetectCoverMode(t *testing.T) {
 		{"ghostty", map[string]string{"TERM_PROGRAM": "ghostty"}, coverKitty},
 		{"wezterm lacks placeholders", map[string]string{"TERM_PROGRAM": "WezTerm"}, coverBlocks},
 		{"kitty inside tmux", map[string]string{"KITTY_WINDOW_ID": "3", "TMUX": "/tmp/tmux"}, coverBlocks},
-		{"force blocks", map[string]string{"KITTY_WINDOW_ID": "3", "SPOTICLI_COVER": "blocks"}, coverBlocks},
-		{"force kitty", map[string]string{"SPOTICLI_COVER": "kitty"}, coverKitty},
+		{"force blocks", map[string]string{"KITTY_WINDOW_ID": "3", "SPOTERM_COVER": "blocks"}, coverBlocks},
+		{"force kitty", map[string]string{"SPOTERM_COVER": "kitty"}, coverKitty},
 	} {
 		if got := detectCoverMode(env(tc.env)); got != tc.want {
 			t.Errorf("%s: got %d, want %d", tc.name, got, tc.want)
@@ -136,12 +136,12 @@ func TestCleanupDeletesTheLastImage(t *testing.T) {
 	c.mode = coverKitty
 	c.Render(8, 4)
 	var sb strings.Builder
-	Cleanup(&sb, env(map[string]string{"SPOTICLI_COVER": "kitty"}))
+	Cleanup(&sb, env(map[string]string{"SPOTERM_COVER": "kitty"}))
 	if want := fmt.Sprintf("i=%d", c.kittyID); !strings.Contains(sb.String(), want) || !strings.Contains(sb.String(), "d=I") {
 		t.Errorf("cleanup %q should delete %s", sb.String(), want)
 	}
 	sb.Reset()
-	Cleanup(&sb, env(map[string]string{"SPOTICLI_COVER": "blocks"}))
+	Cleanup(&sb, env(map[string]string{"SPOTERM_COVER": "blocks"}))
 	if sb.Len() != 0 {
 		t.Errorf("nothing to clean up in blocks mode, got %q", sb.String())
 	}

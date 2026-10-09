@@ -12,8 +12,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
-	"github.com/zenbiscuitslol/spotiCLI/internal/mock"
-	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
+	"github.com/zenbiscuitslol/spoTERM/internal/mock"
+	"github.com/zenbiscuitslol/spoTERM/internal/spotify"
 )
 
 // screenRow plays one line of output onto a row of cells the way a terminal

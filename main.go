@@ -10,14 +10,14 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/zenbiscuitslol/spotiCLI/internal/mock"
-	"github.com/zenbiscuitslol/spotiCLI/internal/player"
-	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
-	"github.com/zenbiscuitslol/spotiCLI/internal/ui"
+	"github.com/zenbiscuitslol/spoTERM/internal/mock"
+	"github.com/zenbiscuitslol/spoTERM/internal/player"
+	"github.com/zenbiscuitslol/spoTERM/internal/spotify"
+	"github.com/zenbiscuitslol/spoTERM/internal/ui"
 )
 
-// deviceName is how spotiCLI's built-in player shows up in Spotify.
-const deviceName = "spotiCLI"
+// deviceName is how spoTERM's built-in player shows up in Spotify.
+const deviceName = "spoTERM"
 
 // srcDir is the checkout this binary was built from; install.sh sets it via -ldflags.
 var srcDir string
@@ -29,16 +29,16 @@ One-time setup:
   2. Add this Redirect URI to it: ` + spotify.RedirectURL + `
   3. Export its Client ID (no secret needed):
        export SPOTIFY_CLIENT_ID=your_client_id
-  4. Run spotiCLI again; a browser window opens for the one-time login.
+  4. Run spoTERM again; a browser window opens for the one-time login.
 
-Try the UI without an account: spotiCLI --demo
+Try the UI without an account: spoTERM --demo
 `
 
 func main() {
 	demo := flag.Bool("demo", false, "use built-in sample data instead of Spotify")
 	logout := flag.Bool("logout", false, "forget the cached Spotify login and exit")
 	noPlayer := flag.Bool("no-player", false, "don't start the built-in player; control another Spotify device instead")
-	update := flag.Bool("update", false, "pull the latest changes and rebuild spotiCLI")
+	update := flag.Bool("update", false, "pull the latest changes and rebuild spoTERM")
 	flag.Parse()
 
 	if *update {
@@ -137,7 +137,7 @@ func selfUpdate() error {
 	if before != "" && before == head() {
 		return nil // git already said "Already up to date."
 	}
-	tmp := filepath.Join(filepath.Dir(exe), ".spotiCLI.new")
+	tmp := filepath.Join(filepath.Dir(exe), ".spoTERM.new")
 	if err := run("go", "build", "-C", srcDir, "-ldflags", "-X main.srcDir="+srcDir, "-o", tmp, "."); err != nil {
 		return err
 	}

@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
-	"github.com/zenbiscuitslol/spotiCLI/internal/mock"
+	"github.com/zenbiscuitslol/spoTERM/internal/mock"
 )
 
 // settle runs a command and feeds its resulting messages back into the model
@@ -67,7 +67,7 @@ func press(tm tea.Model, keys ...string) tea.Model {
 func init() {
 	refreshDelay = 0
 	// Keep tests independent of the terminal they happen to run in.
-	os.Setenv("SPOTICLI_COVER", "blocks")
+	os.Setenv("SPOTERM_COVER", "blocks")
 }
 
 func tmModel(m Model) tea.Model { return m }
@@ -144,6 +144,14 @@ func TestPlayPauseNextPrevious(t *testing.T) {
 	tm = press(tm, "p", "p")
 	if !strings.Contains(tm.View(), "Paper Planes in July") {
 		t.Error("p should go back")
+	}
+}
+
+func TestVolumeKeys(t *testing.T) {
+	tm := boot(110, 32)
+	tm = press(tm, "tab", "enter", "+", "+", "-")
+	if !strings.Contains(tm.View(), "vol 75%") {
+		t.Errorf("expected vol 75%%:\n%s", tm.View())
 	}
 }
 

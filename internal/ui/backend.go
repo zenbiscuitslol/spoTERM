@@ -4,8 +4,8 @@ import (
 	"context"
 	"image"
 
-	"github.com/zenbiscuitslol/spotiCLI/internal/mock"
-	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
+	"github.com/zenbiscuitslol/spoTERM/internal/mock"
+	"github.com/zenbiscuitslol/spoTERM/internal/spotify"
 )
 
 // Backend is everything the UI needs from Spotify. *spotify.Client is the
@@ -23,6 +23,7 @@ type Backend interface {
 	Pause(ctx context.Context) error
 	Next(ctx context.Context) error
 	Previous(ctx context.Context) error
+	SetVolume(ctx context.Context, pct int) error
 	// Search finds tracks, albums and artists matching query.
 	Search(ctx context.Context, query string) (spotify.SearchResults, error)
 	Image(ctx context.Context, url string) (image.Image, error)

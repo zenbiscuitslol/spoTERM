@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/zenbiscuitslol/spotiCLI/internal/spotify"
+	"github.com/zenbiscuitslol/spoTERM/internal/spotify"
 )
 
 // sidebarView renders the tab strip and the scrolling list on the left.

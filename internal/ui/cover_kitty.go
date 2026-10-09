@@ -35,13 +35,13 @@ func newKittyID() int {
 	return id
 }
 
-// detectCoverMode picks a renderer. SPOTICLI_COVER=blocks|kitty overrides it.
+// detectCoverMode picks a renderer. SPOTERM_COVER=blocks|kitty overrides it.
 //
 // Placeholders are supported by Kitty and Ghostty. WezTerm speaks the Kitty
 // protocol but not placeholders, and multiplexers swallow the escapes, so
 // those get half-blocks.
 func detectCoverMode(getenv func(string) string) coverMode {
-	switch getenv("SPOTICLI_COVER") {
+	switch getenv("SPOTERM_COVER") {
 	case "blocks":
 		return coverBlocks
 	case "kitty":

@@ -54,7 +54,7 @@ func themeFile() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "spotiCLI", "theme")
+	return filepath.Join(dir, "spoTERM", "theme")
 }
 
 // LoadTheme applies the theme saved by a previous run, if any.

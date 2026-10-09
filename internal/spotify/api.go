@@ -10,6 +10,7 @@ import (
 	_ "image/jpeg" // register decoders for album art
 	_ "image/png"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -24,7 +25,7 @@ type Client struct {
 	http *http.Client // adds and refreshes the OAuth token
 	base string       // API root; overridden in tests
 
-	// Device is the name of the preferred playback device (the daemon spotiCLI
+	// Device is the name of the preferred playback device (the daemon spoTERM
 	// manages). When set, Play starts there instead of on whatever is active.
 	Device string
 }
@@ -503,6 +504,9 @@ func (c *Client) Pause(ctx context.Context) error {
 func (c *Client) Next(ctx context.Context) error {
 	return c.player(ctx, http.MethodPost, "/me/player/next", nil)
 }
+func (c *Client) SetVolume(ctx context.Context, pct int) error {
+	return c.playerQ(ctx, http.MethodPut, "/me/player/volume", url.Values{"volume_percent": {strconv.Itoa(pct)}}, nil)
+}
 func (c *Client) Previous(ctx context.Context) error {
 	return c.player(ctx, http.MethodPost, "/me/player/previous", nil)
 }
@@ -510,14 +514,23 @@ func (c *Client) Previous(ctx context.Context) error {
 // player sends a playback command. If Spotify reports no active device, it
 // retries once on the first available device (which wakes that device up).
 func (c *Client) player(ctx context.Context, method, path string, body any) error {
-	_, err := c.do(ctx, method, path, nil, body, nil)
+	return c.playerQ(ctx, method, path, nil, body)
+}
+
+func (c *Client) playerQ(ctx context.Context, method, path string, q url.Values, body any) error {
+	_, err := c.do(ctx, method, path, q, body, nil)
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status == http.StatusNotFound && ae.Reason == "NO_ACTIVE_DEVICE" {
 		id, derr := c.pickDevice(ctx)
 		if derr != nil || id == "" {
 			return errors.New("no Spotify device found — open Spotify on a device first")
 		}
-		_, err = c.do(ctx, method, path, url.Values{"device_id": {id}}, body, nil)
+		q = maps.Clone(q)
+		if q == nil {
+			q = url.Values{}
+		}
+		q.Set("device_id", id)
+		_, err = c.do(ctx, method, path, q, body, nil)
 	}
 	return err
 }

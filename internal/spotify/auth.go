@@ -108,7 +108,7 @@ func login(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error) {
 		if res.err != nil {
 			http.Error(w, res.err.Error(), http.StatusBadRequest)
 		} else {
-			fmt.Fprint(w, "<h3>spotiCLI is connected. You can close this tab.</h3>")
+			fmt.Fprint(w, "<h3>spoTERM is connected. You can close this tab.</h3>")
 		}
 		select {
 		case done <- res:
@@ -156,7 +156,7 @@ func tokenPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "spotiCLI", "token.json"), nil
+	return filepath.Join(dir, "spoTERM", "token.json"), nil
 }
 
 func loadToken() (*oauth2.Token, error) {

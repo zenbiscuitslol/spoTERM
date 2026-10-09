@@ -1,5 +1,5 @@
 // Package spotify is a small client for the parts of the Spotify Web API that
-// spotiCLI needs: authentication, playlists, tracks and playback control.
+// spoTERM needs: authentication, playlists, tracks and playback control.
 //
 // It talks to the API directly instead of using a wrapper library because
 // Spotify's February 2026 changes removed endpoints such as

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// TestMain doubles as the "spotiCLI" process in TestDaemonDiesWithParent.
+// TestMain doubles as the "spoTERM" process in TestDaemonDiesWithParent.
 func TestMain(m *testing.M) {
 	if bin := os.Getenv("PLAYER_TEST_BIN"); bin != "" {
 		mgr := &Manager{DeviceName: "x", Bin: bin,
@@ -34,7 +34,7 @@ func alive(pid int) bool {
 	return err == nil && !strings.Contains(string(b), ") Z ")
 }
 
-// If spotiCLI is killed without a chance to clean up, the kernel must take the
+// If spoTERM is killed without a chance to clean up, the kernel must take the
 // player down with it.
 func TestDaemonDiesWithParent(t *testing.T) {
 	dir := t.TempDir()

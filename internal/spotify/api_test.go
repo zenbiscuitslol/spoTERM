@@ -330,10 +330,10 @@ func devicesJSON(devs ...string) string { // "id:name:active"
 
 func TestPlayPrefersOwnDeviceOverActiveOne(t *testing.T) {
 	c, log := fake(t, map[string]func(http.ResponseWriter, *http.Request){
-		"GET /me/player/devices": js(devicesJSON("phone:Phone:true", "mine:spotiCLI:false")),
+		"GET /me/player/devices": js(devicesJSON("phone:Phone:true", "mine:spoTERM:false")),
 		"PUT /me/player/play":    js(``),
 	})
-	c.Device = "spotiCLI"
+	c.Device = "spoTERM"
 	pl := Playlist{ID: "p", URI: "spotify:playlist:p"}
 	if err := c.Play(context.Background(), pl, []Track{{URI: "spotify:track:1"}}, 0); err != nil {
 		t.Fatal(err)
@@ -349,7 +349,7 @@ func TestPlayFallsBackWhenOwnDeviceIsOffline(t *testing.T) {
 		"GET /me/player/devices": js(devicesJSON("phone:Phone:true")),
 		"PUT /me/player/play":    js(``),
 	})
-	c.Device = "spotiCLI"
+	c.Device = "spoTERM"
 	if err := c.Play(context.Background(), Playlist{URI: "spotify:playlist:p"}, []Track{{URI: "t"}}, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -360,12 +360,12 @@ func TestPlayFallsBackWhenOwnDeviceIsOffline(t *testing.T) {
 
 func TestPickDevicePrefersNamedThenActiveThenFirst(t *testing.T) {
 	c, _ := fake(t, map[string]func(http.ResponseWriter, *http.Request){
-		"GET /me/player/devices": js(devicesJSON("a:First:false", "b:Active:true", "c:spotiCLI:false")),
+		"GET /me/player/devices": js(devicesJSON("a:First:false", "b:Active:true", "c:spoTERM:false")),
 	})
 	if id, _ := c.pickDevice(context.Background()); id != "b" {
 		t.Errorf("no preference: want active device b, got %q", id)
 	}
-	c.Device = "spotiCLI"
+	c.Device = "spoTERM"
 	if id, _ := c.pickDevice(context.Background()); id != "c" {
 		t.Errorf("with preference: want c, got %q", id)
 	}
@@ -388,10 +388,10 @@ func TestWaitForDevice(t *testing.T) {
 				js(devicesJSON("phone:Phone:true"))(w, r)
 				return
 			}
-			js(devicesJSON("phone:Phone:true", "mine:spotiCLI:false"))(w, r)
+			js(devicesJSON("phone:Phone:true", "mine:spoTERM:false"))(w, r)
 		},
 	})
-	if err := c.WaitForDevice(context.Background(), "spotiCLI"); err != nil {
+	if err := c.WaitForDevice(context.Background(), "spoTERM"); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 3 {
