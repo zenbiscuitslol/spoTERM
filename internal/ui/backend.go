@@ -24,6 +24,10 @@ type Backend interface {
 	Next(ctx context.Context) error
 	Previous(ctx context.Context) error
 	SetVolume(ctx context.Context, pct int) error
+	SetShuffle(ctx context.Context, on bool) error
+	AddToQueue(ctx context.Context, uri string) error
+	// Queue returns the upcoming tracks in play order.
+	Queue(ctx context.Context) ([]spotify.Track, error)
 	// Search finds tracks, albums and artists matching query.
 	Search(ctx context.Context, query string) (spotify.SearchResults, error)
 	Image(ctx context.Context, url string) (image.Image, error)

@@ -395,3 +395,42 @@ func TestThemeKeyCycles(t *testing.T) {
 		t.Fatalf("LoadTheme: %d", themeIdx)
 	}
 }
+
+func TestLocalQueueAddRemoveSkipAndShuffle(t *testing.T) {
+	tm := boot(110, 32)
+	tm = press(tm, "tab", "enter", "down", "down", "a", "down", "a") // play #1, queue #3 and #4
+	if got := len(tm.(Model).lq); got != 2 {
+		t.Fatalf("local queue has %d tracks, want 2", got)
+	}
+	tm = press(tm, "Q")
+	if v := tm.View(); !strings.Contains(v, "Your queue") || !strings.Contains(v, "Static Bloom") {
+		t.Fatalf("queue view missing entries:\n%s", v)
+	}
+	tm = press(tm, "x") // remove Static Bloom
+	if q := tm.(Model).lq; len(q) != 1 || q[0].Title == "Static Bloom" {
+		t.Fatalf("x should remove the highlighted entry, got %+v", q)
+	}
+	tm = press(tm, "esc", "n")
+	if m := tm.(Model); len(m.lq) != 0 || m.state.Track.Title != m.tracks[3].Title {
+		t.Fatalf("n should hand the head to Spotify and play it, state=%q lq=%d", m.state.Track.Title, len(m.lq))
+	}
+	tm = press(tm, "s")
+	if !tm.(Model).state.Shuffle {
+		t.Error("s should turn shuffle on")
+	}
+}
+
+func TestQueuePushedNearEndOfTrack(t *testing.T) {
+	tm := boot(110, 32)
+	tm = press(tm, "tab", "enter", "down", "down", "a")
+	m := tm.(Model)
+	s := *m.state
+	s.Progress = s.Track.Duration - 5*time.Second
+	tm = settle(tm, func() tea.Msg { return stateMsg{state: &s} })
+	if m = tm.(Model); len(m.lq) != 0 {
+		t.Fatalf("head should have been pushed, lq=%d", len(m.lq))
+	}
+	if q, _ := m.be.Queue(context.Background()); len(q) == 0 || q[0].Title != "Static Bloom" {
+		t.Errorf("Spotify queue should start with the pushed track, got %+v", q)
+	}
+}

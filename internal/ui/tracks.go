@@ -6,11 +6,43 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/zenbiscuitslol/spoTERM/internal/spotify"
 )
 
 func fmtDur(d time.Duration) string {
 	s := int(d.Seconds())
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
+}
+
+// mainView is the queue when it's open, otherwise the track table.
+func (m Model) mainView(w, h int) string {
+	if !m.queueOpen {
+		return m.tracksView(w, h)
+	}
+	inner := w - 2
+	var lines []string
+	row := func(i int, t spotify.Track, st lipgloss.Style) {
+		lines = append(lines, st.Render(fit(fmt.Sprintf(" %2d  %s — %s", i+1, t.Title, t.Artist), inner)))
+	}
+	lines = append(lines, styleMuted.Render(fit(" Your queue (a adds, x removes)", inner)))
+	if len(m.lq) == 0 {
+		lines = append(lines, styleMuted.Render(" empty — press a on a track"))
+	}
+	for i, t := range m.lq {
+		st := styleText
+		if i == m.lqCursor {
+			st = st.Background(colSelBg).Foreground(colHi).Bold(true)
+		}
+		row(i, t, st)
+	}
+	lines = append(lines, "", styleMuted.Render(fit(" Next in Spotify", inner)))
+	if m.queueErr != "" {
+		lines = append(lines, wrap(m.queueErr, styleErr, inner)...)
+	}
+	for i, t := range m.queue {
+		row(i, t, styleMuted)
+	}
+	return panel(fmt.Sprintf("Queue · %d yours (esc closes)", len(m.lq)), block(lines, inner, h-2), w, h, true)
 }
 
 // tracksView renders the track table for the opened playlist.

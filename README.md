@@ -31,10 +31,24 @@ from any other Spotify device you have open if you run with `--no-player`.
 | `enter` | open playlist or album / play track |
 | `space` | play / pause |
 | `+` / `-` | volume up / down (5%) |
+| `s` | toggle shuffle |
+| `a` | add the highlighted track to your queue |
+| `Q` | show / edit your queue: `↑↓` move, `x` remove, `esc` close |
 | `n` / `p` | next / previous |
 | `t` | cycle color theme |
 | `ctrl+s` | search songs, albums and artists |
 | `q` | quit |
+
+## Queue
+
+`a` adds the highlighted track to **your queue**, and `Q` opens it (`x` removes an
+entry). Spotify's API can't remove tracks from its own queue, so yours is kept in
+spoTERM and each track is handed to Spotify about 10 seconds before the current one
+ends (or when you press `n`). Handed-over tracks can't be taken back, and your queue
+is forgotten when you quit. Tracks queued in the Spotify app show under "Next in
+Spotify".
+
+`s` toggles shuffle for whatever is playing.
 
 ## Search
 
@@ -46,7 +60,7 @@ Press `ctrl+s` to open a full-screen search. Results are grouped into **Songs**,
 | *type* | search (results appear once you pause typing) |
 | `tab` / `shift+tab`, `←` / `→` | switch between Songs, Albums and Artists |
 | `↑` / `↓` | move; carries on into the next section at the end of a list |
-| `enter` | play a song, open an album, or open an artist's top tracks |
+| `enter` | play a song, open an album, or open an artist's tracks |
 | `ctrl+u` | clear the search box |
 | `esc` or `ctrl+s` | close search (your query is kept) |
 

@@ -418,11 +418,7 @@ func (c *Client) artistTracks(ctx context.Context, pl Playlist) ([]Track, error)
 		url.Values{"market": {"from_token"}}, nil, &r)
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status != http.StatusTooManyRequests {
-		res, serr := c.Search(ctx, `artist:"`+pl.Name+`"`)
-		if serr != nil {
-			return nil, serr
-		}
-		return res.Tracks, nil
+		return c.artistSearchTracks(ctx, pl.Name)
 	}
 	if err != nil {
 		return nil, err
@@ -434,6 +430,45 @@ func (c *Client) artistTracks(ctx context.Context, pl Playlist) ([]Track, error)
 		}
 	}
 	return tracks, nil
+}
+
+// artistSearchTracks pages through a track search for the artist. Spotify caps
+// how many results one search page returns (as few as 5), so keep asking for
+// more until a page comes back empty or we have enough.
+func (c *Client) artistSearchTracks(ctx context.Context, name string) ([]Track, error) {
+	const maxPages, want = 10, 50
+	var out []Track
+	seen := map[string]bool{}
+	offset := 0
+	for range maxPages {
+		var r struct {
+			Tracks struct {
+				Items []*apiTrack `json:"items"`
+			} `json:"tracks"`
+		}
+		q := url.Values{"q": {`artist:"` + name + `"`}, "type": {"track"},
+			"limit": {strconv.Itoa(searchLimit)}, "offset": {strconv.Itoa(offset)}}
+		if _, err := c.do(ctx, http.MethodGet, "/search", q, nil, &r); err != nil {
+			if len(out) > 0 {
+				break // keep what we have; later pages may be refused
+			}
+			return nil, err
+		}
+		if len(r.Tracks.Items) == 0 {
+			break
+		}
+		offset += len(r.Tracks.Items)
+		for _, t := range r.Tracks.Items {
+			if tr, ok := t.toTrack(); ok && !seen[tr.URI] {
+				seen[tr.URI] = true
+				out = append(out, tr)
+			}
+		}
+		if len(out) >= want {
+			break
+		}
+	}
+	return out, nil
 }
 
 // --- Playback --------------------------------------------------------------
@@ -507,6 +542,33 @@ func (c *Client) Next(ctx context.Context) error {
 func (c *Client) SetVolume(ctx context.Context, pct int) error {
 	return c.playerQ(ctx, http.MethodPut, "/me/player/volume", url.Values{"volume_percent": {strconv.Itoa(pct)}}, nil)
 }
+func (c *Client) SetShuffle(ctx context.Context, on bool) error {
+	return c.playerQ(ctx, http.MethodPut, "/me/player/shuffle", url.Values{"state": {strconv.FormatBool(on)}}, nil)
+}
+
+// AddToQueue appends a track to the end of the playback queue. (Spotify's Web
+// API has no way to remove from the queue, so spoTERM can't either.)
+func (c *Client) AddToQueue(ctx context.Context, uri string) error {
+	return c.playerQ(ctx, http.MethodPost, "/me/player/queue", url.Values{"uri": {uri}}, nil)
+}
+
+// Queue returns the upcoming tracks, in play order.
+func (c *Client) Queue(ctx context.Context) ([]Track, error) {
+	var raw struct {
+		Queue []*apiTrack `json:"queue"`
+	}
+	if status, err := c.do(ctx, http.MethodGet, "/me/player/queue", nil, nil, &raw); err != nil || status == http.StatusNoContent {
+		return nil, err
+	}
+	var out []Track
+	for _, t := range raw.Queue {
+		if tr, ok := t.toTrack(); ok {
+			out = append(out, tr)
+		}
+	}
+	return out, nil
+}
+
 func (c *Client) Previous(ctx context.Context) error {
 	return c.player(ctx, http.MethodPost, "/me/player/previous", nil)
 }

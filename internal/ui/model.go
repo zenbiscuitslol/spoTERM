@@ -21,6 +21,8 @@ const (
 	statusTTL = 6 * frameRate // how long a footer message stays
 
 	minW, minH = 60, 19
+
+	pushLead = 10 * time.Second // hand the next queued track to Spotify this long before the current one ends
 )
 
 // refreshDelay is how long to wait after a command before re-reading state;
@@ -83,6 +85,14 @@ type (
 		err error
 	}
 	playerMsg struct{ err error }
+	pushMsg   struct { // a local-queue track handed to Spotify
+		t   spotify.Track
+		err error
+	}
+	queueMsg struct {
+		tracks []spotify.Track
+		err    error
+	}
 )
 
 type Model struct {
@@ -117,6 +127,18 @@ type Model struct {
 	polling  bool
 	status   string
 	statusAt int
+
+	// Queue view, shown in place of the track table.
+	queueOpen bool
+	queue     []spotify.Track
+	queueErr  string
+
+	// Local queue: Spotify's API can't remove queued tracks, so ours lives
+	// here and the head is only handed to Spotify as the current track nears
+	// its end (or when you skip). Lost on quit.
+	lq        []spotify.Track
+	lqCursor  int
+	pushedFor string // URI of the playing track we already pushed for
 
 	srch searchState
 
@@ -216,6 +238,13 @@ func (m Model) pollCmd() tea.Cmd {
 	return call(15*time.Second, func(ctx context.Context) tea.Msg {
 		s, err := m.be.Playback(ctx)
 		return stateMsg{s, err}
+	})
+}
+
+func (m Model) loadQueue() tea.Cmd {
+	return call(15*time.Second, func(ctx context.Context) tea.Msg {
+		t, err := m.be.Queue(ctx)
+		return queueMsg{t, err}
 	})
 }
 
@@ -325,10 +354,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.elapsed, m.drift = msg.state.Progress, 0
 		}
+		var cmds []tea.Cmd
+		if rem := msg.state.Track.Duration - msg.state.Progress; msg.state.Playing && rem < pushLead &&
+			len(m.lq) > 0 && m.pushedFor != msg.state.Track.URI {
+			m.pushedFor = msg.state.Track.URI
+			cmds = append(cmds, m.pushHead())
+		}
 		if url := msg.state.Track.ImageURL; url != "" && url != m.coverURL {
 			m.coverURL = url
-			return m, m.loadCover(url)
+			cmds = append(cmds, m.loadCover(url))
 		}
+		return m, tea.Batch(cmds...)
+
+	case pushMsg:
+		if msg.err != nil { // put it back so it isn't lost
+			m.lq = append([]spotify.Track{msg.t}, m.lq...)
+			m.setStatus("queue: " + msg.err.Error())
+		}
+		return m, m.refreshQueue()
 
 	case playerMsg:
 		if msg.err != nil {
@@ -344,6 +387,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case searchMsg:
 		return m.onSearchResult(msg)
+
+	case queueMsg:
+		m.queue, m.queueErr = msg.tracks, ""
+		if msg.err != nil {
+			m.queueErr = msg.err.Error()
+		}
 
 	case coverMsg:
 		if msg.err != nil {
@@ -429,10 +478,25 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switchTab((m.tab + 1) % numTabs)
 
 	case "enter":
+		if m.queueOpen {
+			return m, nil
+		}
 		if m.focus == paneSidebar {
 			return m.openAt(m.side[m.tab].cursor, true)
 		}
 		return m.playSelected()
+
+	case "a":
+		return m.addToQueue()
+	case "Q":
+		m.queueOpen = !m.queueOpen
+		if m.queueOpen {
+			return m, m.loadQueue()
+		}
+	case "esc":
+		m.queueOpen = false
+	case "s":
+		return m.shuffle()
 
 	case "t":
 		m.setStatus(fmt.Sprintf("Theme: %s (%d/%d)", nextTheme(), themeIdx+1, len(themes)))
@@ -442,8 +506,26 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.volume(5)
 	case "-", "_":
 		return m.volume(-5)
+	case "x":
+		if m.queueOpen && m.lqCursor < len(m.lq) {
+			m.lq = append(m.lq[:m.lqCursor:m.lqCursor], m.lq[m.lqCursor+1:]...)
+			m.lqCursor = clamp(m.lqCursor, 0, max(len(m.lq)-1, 0))
+		}
 	case "n":
-		return m.skip(func(ctx context.Context, be Backend) error { return be.Next(ctx) })
+		// Skipping early would bypass the local queue, so hand over its head first.
+		var head *spotify.Track
+		if len(m.lq) > 0 && m.state != nil {
+			head, m.lq = &m.lq[0], m.lq[1:]
+			m.lqCursor = clamp(m.lqCursor, 0, max(len(m.lq)-1, 0))
+		}
+		return m.skip(func(ctx context.Context, be Backend) error {
+			if head != nil {
+				if err := be.AddToQueue(ctx, head.URI); err != nil {
+					return err
+				}
+			}
+			return be.Next(ctx)
+		})
 	case "p":
 		return m.skip(func(ctx context.Context, be Backend) error { return be.Previous(ctx) })
 	}
@@ -451,6 +533,10 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) move(delta int) {
+	if m.queueOpen {
+		m.lqCursor = clamp(m.lqCursor+delta, 0, max(len(m.lq)-1, 0))
+		return
+	}
 	d := m.dims()
 	if m.focus == paneSidebar {
 		sl := &m.side[m.tab]
@@ -555,6 +641,47 @@ func (m Model) volume(delta int) (tea.Model, tea.Cmd) {
 	return m, m.act(func(ctx context.Context, be Backend) error { return be.SetVolume(ctx, s.Volume) })
 }
 
+func (m Model) shuffle() (tea.Model, tea.Cmd) {
+	if m.state == nil {
+		m.setStatus("Nothing playing — pick a track and press enter")
+		return m, nil
+	}
+	s := *m.state
+	s.Shuffle = !s.Shuffle
+	m.state = &s
+	m.setStatus("Shuffle " + map[bool]string{true: "on", false: "off"}[s.Shuffle])
+	return m, tea.Batch(m.act(func(ctx context.Context, be Backend) error { return be.SetShuffle(ctx, s.Shuffle) }), m.refreshQueue())
+}
+
+// addToQueue appends the highlighted track to the local queue.
+func (m Model) addToQueue() (tea.Model, tea.Cmd) {
+	if m.focus != paneTracks || m.queueOpen || m.trCursor >= len(m.tracks) {
+		return m, nil
+	}
+	t := m.tracks[m.trCursor]
+	m.lq = append(m.lq, t)
+	m.setStatus(fmt.Sprintf("Queued %s (%d in your queue)", t.Title, len(m.lq)))
+	return m, nil
+}
+
+// pushHead pops the local queue's first track and hands it to Spotify.
+func (m *Model) pushHead() tea.Cmd {
+	t := m.lq[0]
+	m.lq = m.lq[1:]
+	m.lqCursor = clamp(m.lqCursor, 0, max(len(m.lq)-1, 0))
+	return call(15*time.Second, func(ctx context.Context) tea.Msg {
+		return pushMsg{t, m.be.AddToQueue(ctx, t.URI)}
+	})
+}
+
+// refreshQueue reloads the queue only while it is on screen.
+func (m Model) refreshQueue() tea.Cmd {
+	if !m.queueOpen {
+		return nil
+	}
+	return m.loadQueue()
+}
+
 func (m Model) skip(f func(context.Context, Backend) error) (tea.Model, tea.Cmd) {
 	if m.state == nil {
 		m.setStatus("Nothing playing — pick a track and press enter")
@@ -579,7 +706,7 @@ func (m Model) View() string {
 	}
 	d := m.dims()
 	main := lipgloss.JoinVertical(lipgloss.Left,
-		m.tracksView(d.mainW, d.tracksH),
+		m.mainView(d.mainW, d.tracksH),
 		m.nowPlayingView(d.mainW, d.npH),
 	)
 	body := joinBody(m.sidebarView(d.sideW, d.bodyH), main, d.sideW, d.mainW)
@@ -591,5 +718,5 @@ func (m Model) footer() string {
 		return " " + styleErr.Render(fit(m.status, m.w-2))
 	}
 	return styleMuted.Render(fit(
-		" ↑↓ move · tab pane · 1/2 list · enter open/play · space pause · n/p skip · +/- volume · t theme · ^s search · q quit", m.w))
+		" ↑↓ move · tab pane · 1/2 list · enter open/play · space pause · s shuffle · a queue · Q view/edit queue · n/p skip · +/- volume · t theme · ^s search · q quit", m.w))
 }

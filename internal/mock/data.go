@@ -39,6 +39,8 @@ type Backend struct {
 	base    time.Duration // progress at `since`
 	since   time.Time
 	vol     int
+	shuffle bool
+	extra   []spotify.Track // user-queued tracks, played before the rest
 }
 
 func New() *Backend { return &Backend{vol: 70} }
@@ -148,7 +150,7 @@ func (b *Backend) Playback(context.Context) (*spotify.State, error) {
 	}
 	return &spotify.State{
 		Playing: b.playing, Track: b.queue[b.idx], Progress: b.progress(),
-		Volume: b.vol, Repeat: "off", DeviceName: "Demo device",
+		Volume: b.vol, Shuffle: b.shuffle, Repeat: "off", DeviceName: "Demo device",
 	}, nil
 }
 
@@ -181,6 +183,12 @@ func (b *Backend) Pause(context.Context) error {
 func (b *Backend) skip(delta int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.active && delta > 0 && len(b.extra) > 0 {
+		// Queued tracks jump the line: slot the next one in after the current.
+		q := append([]spotify.Track{}, b.queue[:b.idx+1]...)
+		q = append(q, b.extra[0])
+		b.queue, b.extra = append(q, b.queue[b.idx+1:]...), b.extra[1:]
+	}
 	if b.active {
 		b.idx = (b.idx + delta + len(b.queue)) % len(b.queue)
 		b.base, b.since = 0, time.Now()
@@ -193,6 +201,35 @@ func (b *Backend) SetVolume(_ context.Context, pct int) error {
 	defer b.mu.Unlock()
 	b.vol = pct
 	return nil
+}
+
+func (b *Backend) SetShuffle(_ context.Context, on bool) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.shuffle = on
+	return nil
+}
+
+func (b *Backend) AddToQueue(_ context.Context, uri string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, t := range Tracks() {
+		if t.URI == uri {
+			b.extra = append(b.extra, t)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown track %q", uri)
+}
+
+func (b *Backend) Queue(context.Context) ([]spotify.Track, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	q := append([]spotify.Track{}, b.extra...)
+	if b.active {
+		q = append(q, b.queue[b.idx+1:min(b.idx+20, len(b.queue))]...)
+	}
+	return q, nil
 }
 
 func (b *Backend) Next(context.Context) error     { return b.skip(1) }
