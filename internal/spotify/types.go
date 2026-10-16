@@ -8,6 +8,8 @@ package spotify
 
 import "time"
 
+// Playlist is a playlist, Liked Songs, a saved album or an artist; they all
+// share one open-list-play flow.
 type Playlist struct {
 	ID     string
 	Name   string
@@ -41,6 +43,7 @@ type SearchResults struct {
 	Artists []Playlist
 }
 
+// Track is one playable song.
 type Track struct {
 	URI      string
 	Title    string

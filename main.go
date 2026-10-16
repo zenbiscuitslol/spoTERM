@@ -106,11 +106,13 @@ func main() {
 	}
 }
 
+// fatal prints err and exits non-zero.
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
 }
 
+// run executes a command with its output attached to ours.
 func run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
